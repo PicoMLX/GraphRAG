@@ -1,0 +1,229 @@
+// KnowledgeGraph.swift
+// Ported from graphrag-rs `core::KnowledgeGraph`.
+//
+// The Rust version is backed by petgraph plus side indexes. This port uses a
+// value-type adjacency representation: entities/relationships are stored in
+// insertion order with `[ID: Int]` indexes for O(1) lookup, mirroring the
+// `entity_index` HashMap and IndexMap behaviour.
+
+import Foundation
+
+public struct KnowledgeGraph: Sendable, Codable {
+    // Entities, in insertion order.
+    private var entitiesByID: [EntityID: Entity]
+    private var entityOrder: [EntityID]
+
+    // Relationships, in insertion order, with adjacency indexes into the array.
+    public private(set) var relationships: [Relationship]
+    private var outgoing: [EntityID: [Int]]
+    private var incoming: [EntityID: [Int]]
+
+    // Documents and chunks, in insertion order.
+    private var documentsByID: [DocumentID: Document]
+    private var documentOrder: [DocumentID]
+    private var chunksByID: [ChunkID: TextChunk]
+    private var chunkOrder: [ChunkID]
+
+    public init() {
+        entitiesByID = [:]
+        entityOrder = []
+        relationships = []
+        outgoing = [:]
+        incoming = [:]
+        documentsByID = [:]
+        documentOrder = []
+        chunksByID = [:]
+        chunkOrder = []
+    }
+
+    // MARK: - Mutation
+
+    /// Insert an entity. If one with the same id already exists, mentions are
+    /// merged and the higher confidence / any available embedding is kept.
+    public mutating func addEntity(_ entity: Entity) {
+        if var existing = entitiesByID[entity.id] {
+            existing.mentions.append(contentsOf: entity.mentions)
+            existing.confidence = max(existing.confidence, entity.confidence)
+            if existing.embedding == nil { existing.embedding = entity.embedding }
+            if existing.entityType.isEmpty { existing.entityType = entity.entityType }
+            entitiesByID[entity.id] = existing
+        } else {
+            entitiesByID[entity.id] = entity
+            entityOrder.append(entity.id)
+        }
+    }
+
+    /// Insert a directed relationship. Duplicate (source, target, type) edges are
+    /// merged: their evidence context is unioned and the max confidence kept.
+    public mutating func addRelationship(_ relationship: Relationship) {
+        // Merge duplicates.
+        if let existingIndices = outgoing[relationship.source] {
+            for idx in existingIndices
+            where relationships[idx].target == relationship.target
+                && relationships[idx].relationType == relationship.relationType
+            {
+                relationships[idx].confidence = max(
+                    relationships[idx].confidence, relationship.confidence)
+                for ctx in relationship.context where !relationships[idx].context.contains(ctx) {
+                    relationships[idx].context.append(ctx)
+                }
+                return
+            }
+        }
+        let index = relationships.count
+        relationships.append(relationship)
+        outgoing[relationship.source, default: []].append(index)
+        incoming[relationship.target, default: []].append(index)
+    }
+
+    public mutating func addDocument(_ document: Document) {
+        if documentsByID[document.id] == nil { documentOrder.append(document.id) }
+        documentsByID[document.id] = document
+    }
+
+    public mutating func addChunk(_ chunk: TextChunk) {
+        if chunksByID[chunk.id] == nil { chunkOrder.append(chunk.id) }
+        chunksByID[chunk.id] = chunk
+    }
+
+    /// Drop all entities and relationships, preserving documents and chunks.
+    public mutating func clearEntitiesAndRelationships() {
+        entitiesByID.removeAll()
+        entityOrder.removeAll()
+        relationships.removeAll()
+        outgoing.removeAll()
+        incoming.removeAll()
+    }
+
+    // MARK: - Lookup
+
+    public func entity(_ id: EntityID) -> Entity? { entitiesByID[id] }
+    public func document(_ id: DocumentID) -> Document? { documentsByID[id] }
+    public func chunk(_ id: ChunkID) -> TextChunk? { chunksByID[id] }
+    public func contains(_ id: EntityID) -> Bool { entitiesByID[id] != nil }
+
+    public var entities: [Entity] { entityOrder.compactMap { entitiesByID[$0] } }
+    public var documents: [Document] { documentOrder.compactMap { documentsByID[$0] } }
+    public var chunks: [TextChunk] { chunkOrder.compactMap { chunksByID[$0] } }
+
+    public var entityCount: Int { entitiesByID.count }
+    public var relationshipCount: Int { relationships.count }
+    public var documentCount: Int { documentsByID.count }
+    public var chunkCount: Int { chunksByID.count }
+
+    /// Bidirectional neighbors: for every incident edge, the other endpoint and
+    /// the relationship. Deduplicated per (neighbor, relationType).
+    public func neighbors(of id: EntityID) -> [(neighbor: EntityID, relationship: Relationship)] {
+        var result: [(neighbor: EntityID, relationship: Relationship)] = []
+        for idx in outgoing[id] ?? [] {
+            result.append((relationships[idx].target, relationships[idx]))
+        }
+        for idx in incoming[id] ?? [] {
+            result.append((relationships[idx].source, relationships[idx]))
+        }
+        return result
+    }
+
+    /// All relationships where `id` is the source or target.
+    public func entityRelationships(_ id: EntityID) -> [Relationship] {
+        var out: [Relationship] = []
+        for idx in outgoing[id] ?? [] { out.append(relationships[idx]) }
+        for idx in incoming[id] ?? [] { out.append(relationships[idx]) }
+        return out
+    }
+
+    public func outDegree(_ id: EntityID) -> Int { (outgoing[id] ?? []).count }
+    public func inDegree(_ id: EntityID) -> Int { (incoming[id] ?? []).count }
+    public func degree(_ id: EntityID) -> Int { outDegree(id) + inDegree(id) }
+
+    /// Case-insensitive substring match against entity names.
+    public func findEntitiesByName(_ name: String) -> [Entity] {
+        let needle = name.lowercased()
+        return entities.filter { $0.name.lowercased().contains(needle) }
+    }
+
+    /// Shortest path (by hop count) between two entities via BFS, inclusive of
+    /// endpoints, or nil if unreachable within `maxDepth`.
+    public func findRelationshipPath(
+        from source: EntityID, to target: EntityID, maxDepth: Int = 5
+    ) -> [EntityID]? {
+        if source == target { return [source] }
+        var visited: Set<EntityID> = [source]
+        var queue: [(EntityID, [EntityID])] = [(source, [source])]
+        while !queue.isEmpty {
+            let (current, path) = queue.removeFirst()
+            if path.count > maxDepth { continue }
+            for (neighbor, _) in neighbors(of: current) where !visited.contains(neighbor) {
+                let newPath = path + [neighbor]
+                if neighbor == target { return newPath }
+                visited.insert(neighbor)
+                queue.append((neighbor, newPath))
+            }
+        }
+        return nil
+    }
+
+    public func stats() -> GraphStats {
+        let n = entityCount
+        let avgDegree = n > 0 ? Float(2 * relationshipCount) / Float(n) : 0
+        return GraphStats(
+            nodeCount: n,
+            edgeCount: relationshipCount,
+            averageDegree: avgDegree,
+            maxDepth: 0
+        )
+    }
+
+    // MARK: - Codable
+
+    private enum CodingKeys: String, CodingKey {
+        case entities, relationships, documents, chunks
+    }
+
+    public init(from decoder: Decoder) throws {
+        self.init()
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedEntities = try container.decode([Entity].self, forKey: .entities)
+        let decodedDocuments = try container.decode([Document].self, forKey: .documents)
+        let decodedChunks = try container.decode([TextChunk].self, forKey: .chunks)
+        let decodedRelationships = try container.decode([Relationship].self, forKey: .relationships)
+        for e in decodedEntities { addEntity(e) }
+        for d in decodedDocuments { addDocument(d) }
+        for c in decodedChunks { addChunk(c) }
+        for r in decodedRelationships { addRelationship(r) }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(entities, forKey: .entities)
+        try container.encode(relationships, forKey: .relationships)
+        try container.encode(documents, forKey: .documents)
+        try container.encode(chunks, forKey: .chunks)
+    }
+
+    /// Serialize the graph to a JSON file.
+    public func save(toJSON path: String) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        do {
+            let data = try encoder.encode(self)
+            try data.write(to: URL(fileURLWithPath: path))
+        } catch let error as GraphRAGError {
+            throw error
+        } catch {
+            throw GraphRAGError.io(message: error.localizedDescription)
+        }
+    }
+
+    /// Load a graph from a JSON file.
+    public static func load(fromJSON path: String) throws -> KnowledgeGraph {
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            return try JSONDecoder().decode(KnowledgeGraph.self, from: data)
+        } catch let error as GraphRAGError {
+            throw error
+        } catch {
+            throw GraphRAGError.io(message: error.localizedDescription)
+        }
+    }
+}
