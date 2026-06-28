@@ -118,6 +118,20 @@ public struct KnowledgeGraph: Sendable, Codable {
             doc.chunks.removeAll { removed.contains($0.id) }
             documentsByID[documentID] = doc
         }
+        // Scrub evidence pointing at the removed chunks: drop entity mentions and
+        // relationship-context entries that reference them, so traversal/stats and
+        // saved JSON don't expose facts from a document version that's gone.
+        for eid in entityOrder {
+            guard var entity = entitiesByID[eid], !entity.mentions.isEmpty else { continue }
+            let kept = entity.mentions.filter { !removed.contains($0.chunkID) }
+            if kept.count != entity.mentions.count {
+                entity.mentions = kept
+                entitiesByID[eid] = entity
+            }
+        }
+        for idx in relationships.indices where !relationships[idx].context.isEmpty {
+            relationships[idx].context.removeAll { removed.contains($0) }
+        }
     }
 
     /// Drop all entities and relationships, preserving documents and chunks.

@@ -182,12 +182,25 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
         var type: String
         var description: String?
 
-        enum CodingKeys: String, CodingKey { case name, type, description }
+        // Accept both the short JSON-example keys and the verbose names the
+        // prompt's bullet instructions use (entity_name / entity_type / ...).
+        enum CodingKeys: String, CodingKey {
+            case name, type, description
+            case entityName = "entity_name"
+            case entityType = "entity_type"
+            case entityDescription = "entity_description"
+        }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            name = (try? c.decode(String.self, forKey: .name)) ?? ""
-            type = (try? c.decode(String.self, forKey: .type)) ?? ""
-            description = try? c.decode(String.self, forKey: .description)
+            name =
+                (try? c.decode(String.self, forKey: .name))
+                ?? (try? c.decode(String.self, forKey: .entityName)) ?? ""
+            type =
+                (try? c.decode(String.self, forKey: .type))
+                ?? (try? c.decode(String.self, forKey: .entityType)) ?? ""
+            description =
+                (try? c.decode(String.self, forKey: .description))
+                ?? (try? c.decode(String.self, forKey: .entityDescription))
         }
     }
 
@@ -197,13 +210,29 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
         var description: String
         var strength: Float?
 
-        enum CodingKeys: String, CodingKey { case source, target, description, strength }
+        // Accept both the short JSON-example keys and the verbose names from the
+        // prompt's bullet instructions (source_entity / relationship_strength / ...).
+        enum CodingKeys: String, CodingKey {
+            case source, target, description, strength
+            case sourceEntity = "source_entity"
+            case targetEntity = "target_entity"
+            case relationshipDescription = "relationship_description"
+            case relationshipStrength = "relationship_strength"
+        }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            source = (try? c.decode(String.self, forKey: .source)) ?? ""
-            target = (try? c.decode(String.self, forKey: .target)) ?? ""
-            description = (try? c.decode(String.self, forKey: .description)) ?? ""
-            strength = try? c.decode(Float.self, forKey: .strength)
+            source =
+                (try? c.decode(String.self, forKey: .source))
+                ?? (try? c.decode(String.self, forKey: .sourceEntity)) ?? ""
+            target =
+                (try? c.decode(String.self, forKey: .target))
+                ?? (try? c.decode(String.self, forKey: .targetEntity)) ?? ""
+            description =
+                (try? c.decode(String.self, forKey: .description))
+                ?? (try? c.decode(String.self, forKey: .relationshipDescription)) ?? ""
+            strength =
+                (try? c.decode(Float.self, forKey: .strength))
+                ?? (try? c.decode(Float.self, forKey: .relationshipStrength))
         }
     }
 

@@ -96,8 +96,11 @@ public struct PatternEntityExtractor: EntityExtracting {
                     // (./!/?) also ends it ("Acme. Bob") — unless the word is a
                     // known abbreviation/title like "Dr." so "Dr. Smith" merges.
                     if j > runStart, let last = chars[j - 1].unicodeScalars.first {
-                        if CharacterSet(charactersIn: ",;:").contains(last) { break }
-                        if CharacterSet(charactersIn: ".!?").contains(last) {
+                        if CharacterSet(charactersIn: ",;:").contains(last) {
+                            // Keep "Acme, Inc." together: a comma immediately
+                            // followed by an org suffix doesn't end the run.
+                            if !(last == "," && nextWordIsOrgSuffix(chars, from: j)) { break }
+                        } else if CharacterSet(charactersIn: ".!?").contains(last) {
                             var ws = j - 1
                             while ws > runStart && !chars[ws - 1].isWhitespace { ws -= 1 }
                             let word = String(chars[ws..<j])
@@ -172,10 +175,29 @@ public struct PatternEntityExtractor: EntityExtracting {
         return prev.isWhitespace || "\"'([{".contains(prev)
     }
 
+    /// Whether the next word starting at/after `from` is an organization suffix
+    /// (e.g. "Inc"/"Inc."), used to keep "Acme, Inc." as one span.
+    private func nextWordIsOrgSuffix(_ chars: [Character], from: Int) -> Bool {
+        var t = from
+        while t < chars.count && (chars[t] == " " || chars[t] == "\t") { t += 1 }
+        var e = t
+        while e < chars.count && chars[e].isLetter { e += 1 }
+        guard e > t else { return false }
+        let word = String(chars[t..<e]).lowercased()
+        return PatternEntityExtractor.orgSuffixes.contains(word)
+            || PatternEntityExtractor.orgSuffixes.contains(word + ".")
+    }
+
     // MARK: - Classification
 
     private func classify(_ text: String) -> (type: String, confidence: Float)? {
-        let words = text.split(separator: " ").map(String.init)
+        var words = text.split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return nil }
+        // Drop a leading article so "The United States" / "The University of
+        // California" classify as location/organization instead of person.
+        if words.count > 1, ["the", "a", "an"].contains(words[0].lowercased()) {
+            words.removeFirst()
+        }
         guard !words.isEmpty else { return nil }
 
         // Blocklist single sentence-initial words that are common/structural.
@@ -190,7 +212,7 @@ public struct PatternEntityExtractor: EntityExtracting {
             return ("ORGANIZATION", 0.9)
         }
         // Organizations by prefix ("University of ...", etc.).
-        let lower = text.lowercased()
+        let lower = words.joined(separator: " ").lowercased()
         for prefix in PatternEntityExtractor.orgPrefixes where lower.hasPrefix(prefix) {
             return ("ORGANIZATION", 0.9)
         }

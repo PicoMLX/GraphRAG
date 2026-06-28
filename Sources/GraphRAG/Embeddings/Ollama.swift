@@ -51,6 +51,13 @@ public struct OllamaConfig: Sendable {
         // Accept bare hosts ("localhost", "127.0.0.1"): without a scheme, URL
         // parses the host as the scheme and the request fails.
         let normalizedHost = host.contains("://") ? host : "http://\(host)"
+        // If the host already includes a port (e.g. "http://localhost:11434"),
+        // don't append another.
+        if let schemeRange = normalizedHost.range(of: "://"),
+            normalizedHost[schemeRange.upperBound...].contains(":")
+        {
+            return normalizedHost
+        }
         return "\(normalizedHost):\(port)"
     }
 }
