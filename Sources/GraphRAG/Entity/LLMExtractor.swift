@@ -88,11 +88,14 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
 
             var mentions: [EntityMention] = []
             if let range = lowerContent.range(of: name.lowercased()) {
+                // Derive both offsets from the matched range; case folding can
+                // change grapheme counts, so `start + name.count` is unreliable.
                 let start = lowerContent.distance(from: lowerContent.startIndex, to: range.lowerBound)
+                let end = lowerContent.distance(from: lowerContent.startIndex, to: range.upperBound)
                 mentions.append(
                     EntityMention(
                         chunkID: chunk.id, startOffset: start,
-                        endOffset: start + name.count, confidence: 0.9))
+                        endOffset: end, confidence: 0.9))
             }
 
             entities.append(

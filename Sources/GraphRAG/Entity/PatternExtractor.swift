@@ -115,11 +115,28 @@ public struct PatternEntityExtractor: EntityExtracting {
                     }
                     break
                 }
-                let raw = String(chars[runStart..<j])
-                let cleaned = raw.trimmingCharacters(
-                    in: CharacterSet(charactersIn: ".,;:!?\"'()"))
-                if cleaned.count >= 2 {
-                    spans.append(Span(text: cleaned, start: runStart, end: runStart + cleaned.count))
+                // Trim leading/trailing punctuation on the index range so the
+                // recorded offsets stay aligned with the original text (trimming
+                // the string alone would leave `runStart` pointing at a dropped
+                // leading character).
+                let trimSet = CharacterSet(charactersIn: ".,;:!?\"'()")
+                var spanStart = runStart
+                var spanEnd = j
+                while spanStart < spanEnd,
+                    let scalar = chars[spanStart].unicodeScalars.first,
+                    trimSet.contains(scalar)
+                {
+                    spanStart += 1
+                }
+                while spanEnd > spanStart,
+                    let scalar = chars[spanEnd - 1].unicodeScalars.first,
+                    trimSet.contains(scalar)
+                {
+                    spanEnd -= 1
+                }
+                if spanEnd - spanStart >= 2 {
+                    let cleaned = String(chars[spanStart..<spanEnd])
+                    spans.append(Span(text: cleaned, start: spanStart, end: spanEnd))
                 }
                 i = j
             } else {

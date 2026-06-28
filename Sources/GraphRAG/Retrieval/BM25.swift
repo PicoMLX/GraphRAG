@@ -103,7 +103,11 @@ public struct BM25Retriever: Sendable {
                 guard let rawCount = entry.termCounts[term], rawCount > 0 else { continue }
                 let df = Float(documentFrequency[term] ?? 1)
                 let idf = log(n / df) + 1.0
-                let tf = Float(rawCount) / Float(max(entry.length, 1))
+                // Standard BM25 uses the raw term count; document-length
+                // normalization is handled solely by the `|D| / avgdl` factor in
+                // the denominator (normalizing tf here as well would penalize
+                // length twice).
+                let tf = Float(rawCount)
                 let denom = tf + k1 * (1 - b + b * (Float(entry.length) / max(avgdl, 1)))
                 score += idf * (tf * (k1 + 1)) / max(denom, 0.0001)
             }

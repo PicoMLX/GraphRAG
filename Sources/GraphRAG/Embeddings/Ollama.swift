@@ -86,21 +86,19 @@ enum OllamaHTTP {
     }
 
     private static func perform(_ request: URLRequest) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            let task = URLSession.shared.dataTask(with: request) { data, response, error in
-                if let error {
-                    continuation.resume(throwing: GraphRAGError.network(message: error.localizedDescription))
-                    return
-                }
-                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                    continuation.resume(
-                        throwing: GraphRAGError.http(message: "HTTP \(http.statusCode)"))
-                    return
-                }
-                continuation.resume(returning: data ?? Data())
-            }
-            task.resume()
+        // Async-native URLSession supports task cancellation, unlike the legacy
+        // callback API wrapped in a continuation.
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw GraphRAGError.network(message: error.localizedDescription)
         }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw GraphRAGError.http(message: "HTTP \(http.statusCode)")
+        }
+        return data
     }
 }
 

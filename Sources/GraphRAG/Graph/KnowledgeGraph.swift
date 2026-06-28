@@ -115,11 +115,20 @@ public struct KnowledgeGraph: Sendable, Codable {
     /// the relationship. Deduplicated per (neighbor, relationType).
     public func neighbors(of id: EntityID) -> [(neighbor: EntityID, relationship: Relationship)] {
         var result: [(neighbor: EntityID, relationship: Relationship)] = []
+        var seen: Set<String> = []
         for idx in outgoing[id] ?? [] {
-            result.append((relationships[idx].target, relationships[idx]))
+            let target = relationships[idx].target
+            let key = "\(target.raw)|\(relationships[idx].relationType)"
+            if seen.insert(key).inserted {
+                result.append((target, relationships[idx]))
+            }
         }
         for idx in incoming[id] ?? [] {
-            result.append((relationships[idx].source, relationships[idx]))
+            let source = relationships[idx].source
+            let key = "\(source.raw)|\(relationships[idx].relationType)"
+            if seen.insert(key).inserted {
+                result.append((source, relationships[idx]))
+            }
         }
         return result
     }
