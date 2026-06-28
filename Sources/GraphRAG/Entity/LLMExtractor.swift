@@ -163,7 +163,7 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
 
     // MARK: - Parsing
 
-    struct ExtractionOutput: Codable {
+    struct ExtractionOutput: Decodable {
         var entities: [EntityData] = []
         var relationships: [RelationshipData] = []
 
@@ -177,7 +177,7 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
         }
     }
 
-    struct EntityData: Codable {
+    struct EntityData: Decodable {
         var name: String
         var type: String
         var description: String?
@@ -204,7 +204,7 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
         }
     }
 
-    struct RelationshipData: Codable {
+    struct RelationshipData: Decodable {
         var source: String
         var target: String
         var description: String
