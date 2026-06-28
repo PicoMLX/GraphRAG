@@ -18,8 +18,8 @@ public struct BM25Result: Sendable, Equatable {
 
 /// Okapi BM25 keyword retriever over an in-memory document collection.
 ///
-/// Matches the Rust implementation: term frequency is normalized by document
-/// length, IDF is `log(N / df) + 1`, with `k1 = 1.2` and `b = 0.75`.
+/// Uses raw term frequency with `|D| / avgdl` length normalization, IDF is
+/// `log(N / df) + 1`, with `k1 = 1.2` and `b = 0.75`.
 public struct BM25Retriever: Sendable {
     public let k1: Float
     public let b: Float
