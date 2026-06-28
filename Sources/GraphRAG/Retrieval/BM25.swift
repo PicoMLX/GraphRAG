@@ -127,15 +127,23 @@ public struct BM25Retriever: Sendable {
 
     static func tokenize(_ text: String) -> [String] {
         var tokens: [String] = []
-        for rawWord in text.split(whereSeparator: { $0.isWhitespace }) {
-            var cleaned = ""
-            for ch in rawWord where ch.isLetter || ch.isNumber {
-                cleaned.append(contentsOf: ch.lowercased())
+        var current = ""
+        func flush() {
+            if current.count > 2, !TfIdfKeywordExtractor.defaultStopwords.contains(current) {
+                tokens.append(current)
             }
-            if cleaned.count <= 2 { continue }
-            if TfIdfKeywordExtractor.defaultStopwords.contains(cleaned) { continue }
-            tokens.append(cleaned)
+            current = ""
         }
+        // Split on any non-alphanumeric so punctuation separates terms
+        // ("graph-based" -> "graph", "based") instead of concatenating them.
+        for ch in text {
+            if ch.isLetter || ch.isNumber {
+                current.append(contentsOf: ch.lowercased())
+            } else {
+                flush()
+            }
+        }
+        flush()
         return tokens
     }
 }

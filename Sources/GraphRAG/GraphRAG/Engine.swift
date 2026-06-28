@@ -114,12 +114,14 @@ public actor GraphRAG {
                         .prefix(config.maxEntitiesPerChunk))
             }
 
+            let keptIDs = Set(entities.map(\.id))
             for entity in entities { graph.addEntity(entity) }
             if config.entity.extractRelationships {
-                // Keep only relationships whose endpoints exist in the graph
-                // (drops edges to entities removed by the per-chunk cap).
+                // Scope to entities that survived THIS chunk's cap — not global
+                // graph state — so the cap can't be defeated by an id that
+                // already exists from an earlier chunk.
                 for relationship in relationships
-                where graph.contains(relationship.source) && graph.contains(relationship.target) {
+                where keptIDs.contains(relationship.source) && keptIDs.contains(relationship.target) {
                     graph.addRelationship(relationship)
                 }
             }
@@ -146,8 +148,7 @@ public actor GraphRAG {
             }
         }
 
-        // Stage 3: build the hybrid retrieval index.
-        retriever.clear()
+        // Stage 3: build the hybrid retrieval index (index(graph:) clears first).
         retriever.index(graph: graph)
 
         // Only declare success if no new documents arrived during the build;

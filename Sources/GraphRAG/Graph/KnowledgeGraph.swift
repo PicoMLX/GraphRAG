@@ -56,6 +56,11 @@ public struct KnowledgeGraph: Sendable, Codable {
     /// Insert a directed relationship. Duplicate (source, target, type) edges are
     /// merged: their evidence context is unioned and the max confidence kept.
     public mutating func addRelationship(_ relationship: Relationship) {
+        // Ignore dangling edges: both endpoints must be nodes, otherwise
+        // `neighbors(of:)`/traversals could surface an EntityID with no node.
+        guard entitiesByID[relationship.source] != nil,
+            entitiesByID[relationship.target] != nil
+        else { return }
         // Merge duplicates.
         if let existingIndices = outgoing[relationship.source] {
             for idx in existingIndices
@@ -84,6 +89,16 @@ public struct KnowledgeGraph: Sendable, Codable {
     public mutating func addChunk(_ chunk: TextChunk) {
         if chunksByID[chunk.id] == nil { chunkOrder.append(chunk.id) }
         chunksByID[chunk.id] = chunk
+        // Keep the copy embedded in its document in sync, so
+        // `document(id)?.chunks` and saved JSON reflect enrichment too.
+        if var doc = documentsByID[chunk.documentID] {
+            if let idx = doc.chunks.firstIndex(where: { $0.id == chunk.id }) {
+                doc.chunks[idx] = chunk
+            } else {
+                doc.chunks.append(chunk)
+            }
+            documentsByID[chunk.documentID] = doc
+        }
     }
 
     /// Remove all chunks belonging to a document (used when a document is
@@ -93,6 +108,10 @@ public struct KnowledgeGraph: Sendable, Codable {
         guard !removed.isEmpty else { return }
         chunkOrder.removeAll { removed.contains($0) }
         for id in removed { chunksByID.removeValue(forKey: id) }
+        if var doc = documentsByID[documentID] {
+            doc.chunks.removeAll { removed.contains($0.id) }
+            documentsByID[documentID] = doc
+        }
     }
 
     /// Drop all entities and relationships, preserving documents and chunks.

@@ -88,8 +88,11 @@ public struct HybridRetriever: Sendable {
         }
     }
 
-    /// Index all chunks of a knowledge graph.
+    /// Index all chunks of a knowledge graph as a full (re)index. Clears any
+    /// previously indexed content first, so ids removed since the last index
+    /// can't linger in `contents`, BM25, or the vector store.
     public mutating func index(graph: KnowledgeGraph) {
+        clear()
         for chunk in graph.chunks {
             index(id: chunk.id.raw, content: chunk.content, embedding: chunk.embedding)
         }

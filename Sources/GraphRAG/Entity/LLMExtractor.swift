@@ -87,7 +87,9 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
             let id = PatternEntityExtractor.makeEntityID(type: type, name: name)
 
             var mentions: [EntityMention] = []
-            if let range = lowerContent.range(of: name.lowercased()) {
+            if let range = LLMEntityExtractor.tokenBoundaryRange(
+                of: name.lowercased(), in: lowerContent)
+            {
                 // Derive both offsets from the matched range; case folding can
                 // change grapheme counts, so `start + name.count` is unreliable.
                 let start = lowerContent.distance(from: lowerContent.startIndex, to: range.lowerBound)
@@ -127,6 +129,25 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
             String(word.filter { $0.isLetter || $0.isNumber }).uppercased()
         }.filter { !$0.isEmpty }.joined(separator: "_")
         return label.isEmpty ? "RELATED_TO" : label
+    }
+
+    /// First occurrence of `needle` in `haystack` that sits on token boundaries
+    /// (not embedded inside a larger word), so "Ann" won't match "Annabelle".
+    static func tokenBoundaryRange(of needle: String, in haystack: String) -> Range<String.Index>? {
+        guard !needle.isEmpty else { return nil }
+        func isWordChar(_ c: Character) -> Bool { c.isLetter || c.isNumber }
+        var searchStart = haystack.startIndex
+        while let range = haystack.range(of: needle, range: searchStart..<haystack.endIndex) {
+            let beforeOK =
+                range.lowerBound == haystack.startIndex
+                || !isWordChar(haystack[haystack.index(before: range.lowerBound)])
+            let afterOK =
+                range.upperBound == haystack.endIndex
+                || !isWordChar(haystack[range.upperBound])
+            if beforeOK && afterOK { return range }
+            searchStart = range.upperBound
+        }
+        return nil
     }
 
     // MARK: - Parsing

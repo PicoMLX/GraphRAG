@@ -47,7 +47,12 @@ public struct OllamaConfig: Sendable {
         self.numCtx = numCtx
     }
 
-    var baseURL: String { "\(host):\(port)" }
+    var baseURL: String {
+        // Accept bare hosts ("localhost", "127.0.0.1"): without a scheme, URL
+        // parses the host as the scheme and the request fails.
+        let normalizedHost = host.contains("://") ? host : "http://\(host)"
+        return "\(normalizedHost):\(port)"
+    }
 }
 
 /// Shared low-level HTTP helpers for the Ollama REST API.

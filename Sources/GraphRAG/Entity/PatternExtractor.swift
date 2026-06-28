@@ -103,7 +103,10 @@ public struct PatternEntityExtractor: EntityExtracting {
                             let word = String(chars[ws..<j])
                                 .trimmingCharacters(in: CharacterSet(charactersIn: ".!?"))
                                 .lowercased()
-                            if !PatternEntityExtractor.abbreviations.contains(word) { break }
+                            // Only person titles (which grammatically precede a
+                            // name) cross the period — "Dr. Smith" merges, but an
+                            // org suffix like "Acme Inc. Bob" must split.
+                            if !PatternEntityExtractor.personTitles.contains(word) { break }
                         }
                     }
                     // peek next word
@@ -217,7 +220,21 @@ public struct PatternEntityExtractor: EntityExtracting {
 
     private func inferRelationships(entities: [Entity], chunk: TextChunk) -> [Relationship] {
         guard entities.count >= 2 else { return [] }
-        let context = chunk.content.lowercased()
+        let chars = Array(chunk.content)
+
+        // Assign a sentence id to every character offset (incremented after
+        // ./!/?), so relationships are only inferred between entities that
+        // co-occur in the SAME sentence — otherwise one "works for" phrase would
+        // wrongly link every person/org pair sharing a chunk.
+        var sentenceID = [Int](repeating: 0, count: chars.count + 1)
+        var sid = 0
+        for k in 0..<chars.count {
+            sentenceID[k] = sid
+            if chars[k] == "." || chars[k] == "!" || chars[k] == "?" { sid += 1 }
+        }
+        sentenceID[chars.count] = sid
+        func sentence(of offset: Int) -> Int { sentenceID[max(0, min(offset, chars.count))] }
+
         var relationships: [Relationship] = []
         var seen: Set<String> = []
 
@@ -225,6 +242,17 @@ public struct PatternEntityExtractor: EntityExtracting {
             for j in (i + 1)..<entities.count {
                 let a = entities[i]
                 let b = entities[j]
+                // Find a mention pair that shares a sentence; skip the pair if none.
+                guard let (aOff, bOff) = sameSentenceMentions(a, b, sentence: sentence) else {
+                    continue
+                }
+                // Localize the keyword context to that sentence.
+                var lo = min(aOff, bOff)
+                while lo > 0 && sentence(of: lo - 1) == sentence(of: aOff) { lo -= 1 }
+                var hi = max(aOff, bOff)
+                while hi < chars.count && sentence(of: hi) == sentence(of: aOff) { hi += 1 }
+                let context = (lo < hi ? String(chars[lo..<hi]) : "").lowercased()
+
                 let relType = relationType(for: a.entityType, b.entityType, context: context)
                 // Orient asymmetric relations by entity role, independent of the
                 // order the spans happened to appear in the text.
@@ -239,6 +267,18 @@ public struct PatternEntityExtractor: EntityExtracting {
             }
         }
         return relationships
+    }
+
+    /// First mention pair of `a` and `b` that falls in the same sentence.
+    private func sameSentenceMentions(
+        _ a: Entity, _ b: Entity, sentence: (Int) -> Int
+    ) -> (Int, Int)? {
+        for ma in a.mentions {
+            for mb in b.mentions where sentence(ma.startOffset) == sentence(mb.startOffset) {
+                return (ma.startOffset, mb.startOffset)
+            }
+        }
+        return nil
     }
 
     /// Order (source, target) for a typed relation by the entities' roles.
@@ -301,12 +341,6 @@ public struct PatternEntityExtractor: EntityExtracting {
         "berlin", "washington", "boston", "chicago",
     ]
     static let personTitles: Set<String> = ["dr", "prof", "mr", "mrs", "ms"]
-    /// Words ending in `.` that should NOT end a Title-Case run (titles and
-    /// common abbreviations), so e.g. "Dr. Smith" / "Acme Inc." stay merged.
-    static let abbreviations: Set<String> = [
-        "dr", "prof", "mr", "mrs", "ms", "jr", "sr", "st", "vs", "etc",
-        "inc", "corp", "ltd", "co",
-    ]
     static let blocklist: Set<String> = [
         "the", "and", "but", "or", "chapter", "section", "however", "therefore",
         "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
