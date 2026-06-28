@@ -82,7 +82,13 @@ public struct KnowledgeGraph: Sendable, Codable {
     }
 
     public mutating func addDocument(_ document: Document) {
-        if documentsByID[document.id] == nil { documentOrder.append(document.id) }
+        if documentsByID[document.id] == nil {
+            documentOrder.append(document.id)
+        } else {
+            // Replacing an existing id: purge the previous version's chunks so
+            // direct KnowledgeGraph callers don't retain stale chunk text.
+            removeChunks(forDocument: document.id)
+        }
         documentsByID[document.id] = document
     }
 

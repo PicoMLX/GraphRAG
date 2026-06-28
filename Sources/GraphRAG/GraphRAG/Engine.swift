@@ -104,7 +104,11 @@ public actor GraphRAG {
         for id in chunkIDs {
             guard let chunk = graph.chunk(id) else { continue }
             let extracted = try await extractor.extract(from: chunk)
-            var entities = extracted.entities
+            // Apply the configured confidence threshold uniformly — injected/LLM
+            // extractors don't self-filter the way the pattern extractor does.
+            var entities = extracted.entities.filter {
+                $0.confidence >= config.entity.minConfidence
+            }
             let relationships = extracted.relationships
 
             // Honor the per-chunk entity cap, keeping the highest-confidence ones.

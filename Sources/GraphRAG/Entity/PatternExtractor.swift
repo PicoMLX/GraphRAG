@@ -228,18 +228,28 @@ public struct PatternEntityExtractor: EntityExtracting {
         // wrongly link every person/org pair sharing a chunk. A period that ends
         // a person title ("Dr.") is an abbreviation, not a sentence boundary, so
         // "Dr. Smith works for Acme Inc." stays one sentence.
-        func periodEndsAbbreviation(_ periodIndex: Int) -> Bool {
+        func periodIsSentenceEnd(_ periodIndex: Int) -> Bool {
             var s = periodIndex
             while s > 0 && chars[s - 1].isLetter { s -= 1 }
-            return PatternEntityExtractor.sentenceAbbreviations.contains(
-                String(chars[s..<periodIndex]).lowercased())
+            let word = String(chars[s..<periodIndex]).lowercased()
+            // Person titles precede a name, so never a sentence end ("Dr. Smith").
+            if PatternEntityExtractor.personTitles.contains(word) { return false }
+            // Other abbreviations (Inc./Corp.) end a sentence only when the next
+            // word is capitalized — "Acme Inc. was ..." stays one sentence, but
+            // "... Acme Inc. Bob ..." splits.
+            if PatternEntityExtractor.sentenceAbbreviations.contains(word) {
+                var t = periodIndex + 1
+                while t < chars.count && chars[t] == " " { t += 1 }
+                return t < chars.count && chars[t].isUppercase
+            }
+            return true
         }
         var sentenceID = [Int](repeating: 0, count: chars.count + 1)
         var sid = 0
         for k in 0..<chars.count {
             sentenceID[k] = sid
             let c = chars[k]
-            if c == "!" || c == "?" || (c == "." && !periodEndsAbbreviation(k)) { sid += 1 }
+            if c == "!" || c == "?" || (c == "." && periodIsSentenceEnd(k)) { sid += 1 }
         }
         sentenceID[chars.count] = sid
         func sentence(of offset: Int) -> Int { sentenceID[max(0, min(offset, chars.count))] }

@@ -77,6 +77,7 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
         -> (entities: [Entity], relationships: [Relationship])
     {
         var entities: [Entity] = []
+        var indexByID: [EntityID: Int] = [:]
         var idByName: [String: EntityID] = [:]
         let lowerContent = chunk.content.lowercased()
 
@@ -100,8 +101,15 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
                         endOffset: end, confidence: 0.9))
             }
 
-            entities.append(
-                Entity(id: id, name: name, entityType: type, confidence: 0.9, mentions: mentions))
+            // Deduplicate by id (e.g. a gleaning pass repeating an entity) so a
+            // duplicate doesn't later consume the per-chunk cap.
+            if let idx = indexByID[id] {
+                entities[idx].mentions.append(contentsOf: mentions)
+            } else {
+                indexByID[id] = entities.count
+                entities.append(
+                    Entity(id: id, name: name, entityType: type, confidence: 0.9, mentions: mentions))
+            }
             idByName[name.lowercased()] = id
         }
 
