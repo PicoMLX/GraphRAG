@@ -129,7 +129,9 @@ public struct BM25Retriever: Sendable {
         var tokens: [String] = []
         var current = ""
         func flush() {
-            if current.count > 2, !TfIdfKeywordExtractor.defaultStopwords.contains(current) {
+            // Keep 2-letter acronyms (AI, ML, EU); only single chars are dropped.
+            // Common short words are already removed by the stopword filter.
+            if current.count >= 2, !TfIdfKeywordExtractor.defaultStopwords.contains(current) {
                 tokens.append(current)
             }
             current = ""

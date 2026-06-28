@@ -111,10 +111,13 @@ public struct LLMEntityExtractor<Model: LanguageModel>: EntityExtracting {
             let tgt = data.target.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
             guard let sourceID = idByName[src], let targetID = idByName[tgt] else { continue }
             let relType = LLMEntityExtractor.relationTypeLabel(from: data.description)
+            // Clamp model-provided strength to a valid confidence; out-of-range
+            // values would distort traversal filtering and PageRank weights.
+            let confidence = min(max(data.strength ?? 0.7, 0), 1)
             relationships.append(
                 Relationship(
                     source: sourceID, target: targetID, relationType: relType,
-                    confidence: data.strength ?? 0.7, context: [chunk.id]))
+                    confidence: confidence, context: [chunk.id]))
         }
 
         return (entities, relationships)

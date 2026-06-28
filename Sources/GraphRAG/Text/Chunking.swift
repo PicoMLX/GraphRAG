@@ -62,6 +62,9 @@ public struct HierarchicalChunker: Sendable {
         let chars = Array(text)
         let n = chars.count
         guard n > 0, chunkSize > 0 else { return [] }
+        // Clamp: a negative overlap would advance past the chunk end and skip
+        // text. (TextProcessor rejects it, but this public API must be safe too.)
+        let overlap = max(0, overlap)
 
         var spans: [ChunkSpan] = []
         var start = 0

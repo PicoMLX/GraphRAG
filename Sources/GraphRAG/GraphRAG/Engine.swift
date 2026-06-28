@@ -126,11 +126,11 @@ public actor GraphRAG {
                 }
             }
 
-            // Re-fetch before writing: if the document was replaced during the
-            // extraction await, write entity ids onto the current chunk rather
-            // than clobbering new content with the pre-await snapshot. Always
-            // writing (even an empty list) clears stale ids from a prior build.
-            if var current = graph.chunk(id) {
+            // Only annotate the chunk if it wasn't replaced during the await
+            // (content still matches what we extracted from). A replacement bumps
+            // ingestionVersion, so the build is already marked unbuilt and will
+            // redo this next round rather than tagging new text with stale ids.
+            if var current = graph.chunk(id), current.content == chunk.content {
                 current.entities = entities.map(\.id)
                 graph.addChunk(current)
             }
@@ -140,9 +140,9 @@ public actor GraphRAG {
         for id in chunkIDs {
             guard let chunk = graph.chunk(id) else { continue }
             let embedding = try await embedder.embed(chunk.content)
-            // Re-fetch so a document replaced during the embedding await isn't
-            // overwritten by the stale snapshot.
-            if var current = graph.chunk(id) {
+            // Skip if the chunk was replaced during the embedding await (content
+            // changed), so we never attach an old-content embedding to new text.
+            if var current = graph.chunk(id), current.content == chunk.content {
                 current.embedding = embedding
                 graph.addChunk(current)
             }

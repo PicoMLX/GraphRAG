@@ -228,10 +228,10 @@ public struct PatternEntityExtractor: EntityExtracting {
         // wrongly link every person/org pair sharing a chunk. A period that ends
         // a person title ("Dr.") is an abbreviation, not a sentence boundary, so
         // "Dr. Smith works for Acme Inc." stays one sentence.
-        func periodEndsTitle(_ periodIndex: Int) -> Bool {
+        func periodEndsAbbreviation(_ periodIndex: Int) -> Bool {
             var s = periodIndex
             while s > 0 && chars[s - 1].isLetter { s -= 1 }
-            return PatternEntityExtractor.personTitles.contains(
+            return PatternEntityExtractor.sentenceAbbreviations.contains(
                 String(chars[s..<periodIndex]).lowercased())
         }
         var sentenceID = [Int](repeating: 0, count: chars.count + 1)
@@ -239,7 +239,7 @@ public struct PatternEntityExtractor: EntityExtracting {
         for k in 0..<chars.count {
             sentenceID[k] = sid
             let c = chars[k]
-            if c == "!" || c == "?" || (c == "." && !periodEndsTitle(k)) { sid += 1 }
+            if c == "!" || c == "?" || (c == "." && !periodEndsAbbreviation(k)) { sid += 1 }
         }
         sentenceID[chars.count] = sid
         func sentence(of offset: Int) -> Int { sentenceID[max(0, min(offset, chars.count))] }
@@ -370,6 +370,14 @@ public struct PatternEntityExtractor: EntityExtracting {
         "berlin", "washington", "boston", "chicago",
     ]
     static let personTitles: Set<String> = ["dr", "prof", "mr", "mrs", "ms"]
+    /// Words whose trailing period is an abbreviation rather than a sentence end,
+    /// used only for sentence segmentation in relationship inference (so
+    /// "Acme Inc. was founded by Sam Altman" stays one sentence). Entity-span
+    /// splitting still uses the narrower `personTitles`.
+    static let sentenceAbbreviations: Set<String> = [
+        "dr", "prof", "mr", "mrs", "ms", "jr", "sr", "st",
+        "inc", "corp", "ltd", "llc", "co", "etc", "vs",
+    ]
     static let blocklist: Set<String> = [
         "the", "and", "but", "or", "chapter", "section", "however", "therefore",
         "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",

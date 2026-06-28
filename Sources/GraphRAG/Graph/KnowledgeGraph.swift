@@ -115,12 +115,24 @@ public struct KnowledgeGraph: Sendable, Codable {
     }
 
     /// Drop all entities and relationships, preserving documents and chunks.
+    /// Chunk entity references are cleared too (in both `chunksByID` and the
+    /// document copies) so no chunk points at an entity id that no longer exists.
     public mutating func clearEntitiesAndRelationships() {
         entitiesByID.removeAll()
         entityOrder.removeAll()
         relationships.removeAll()
         outgoing.removeAll()
         incoming.removeAll()
+        for id in chunkOrder where !(chunksByID[id]?.entities.isEmpty ?? true) {
+            chunksByID[id]?.entities = []
+        }
+        for did in documentOrder {
+            guard var doc = documentsByID[did] else { continue }
+            for i in doc.chunks.indices where !doc.chunks[i].entities.isEmpty {
+                doc.chunks[i].entities = []
+            }
+            documentsByID[did] = doc
+        }
     }
 
     // MARK: - Lookup
