@@ -225,12 +225,21 @@ public struct PatternEntityExtractor: EntityExtracting {
         // Assign a sentence id to every character offset (incremented after
         // ./!/?), so relationships are only inferred between entities that
         // co-occur in the SAME sentence — otherwise one "works for" phrase would
-        // wrongly link every person/org pair sharing a chunk.
+        // wrongly link every person/org pair sharing a chunk. A period that ends
+        // a person title ("Dr.") is an abbreviation, not a sentence boundary, so
+        // "Dr. Smith works for Acme Inc." stays one sentence.
+        func periodEndsTitle(_ periodIndex: Int) -> Bool {
+            var s = periodIndex
+            while s > 0 && chars[s - 1].isLetter { s -= 1 }
+            return PatternEntityExtractor.personTitles.contains(
+                String(chars[s..<periodIndex]).lowercased())
+        }
         var sentenceID = [Int](repeating: 0, count: chars.count + 1)
         var sid = 0
         for k in 0..<chars.count {
             sentenceID[k] = sid
-            if chars[k] == "." || chars[k] == "!" || chars[k] == "?" { sid += 1 }
+            let c = chars[k]
+            if c == "!" || c == "?" || (c == "." && !periodEndsTitle(k)) { sid += 1 }
         }
         sentenceID[chars.count] = sid
         func sentence(of offset: Int) -> Int { sentenceID[max(0, min(offset, chars.count))] }
@@ -246,12 +255,18 @@ public struct PatternEntityExtractor: EntityExtracting {
                 guard let (aOff, bOff) = sameSentenceMentions(a, b, sentence: sentence) else {
                     continue
                 }
-                // Localize the keyword context to that sentence.
-                var lo = min(aOff, bOff)
-                while lo > 0 && sentence(of: lo - 1) == sentence(of: aOff) { lo -= 1 }
-                var hi = max(aOff, bOff)
-                while hi < chars.count && sentence(of: hi) == sentence(of: aOff) { hi += 1 }
-                let context = (lo < hi ? String(chars[lo..<hi]) : "").lowercased()
+                let lo = min(aOff, bOff)
+                let hi = max(aOff, bOff)
+                // Proximity heuristic: skip the pair if another entity of the same
+                // type as an endpoint lies between them — the connecting phrase
+                // most likely belongs to that nearer pair. (Offline extractor; not
+                // a full relation classifier, so this trades some recall for far
+                // fewer false edges in multi-fact sentences.)
+                if hasInterveningSameType(a, b, lo: lo, hi: hi, among: entities) { continue }
+                // Keyword context is just the span between the two mentions, so a
+                // phrase belonging to a different pair in the sentence can't leak.
+                let upper = min(hi + 1, chars.count)
+                let context = (lo < upper ? String(chars[lo..<upper]) : "").lowercased()
 
                 let relType = relationType(for: a.entityType, b.entityType, context: context)
                 // Orient asymmetric relations by entity role, independent of the
@@ -267,6 +282,20 @@ public struct PatternEntityExtractor: EntityExtracting {
             }
         }
         return relationships
+    }
+
+    /// Whether an entity (other than `a`/`b`) of the same type as one endpoint
+    /// has a mention strictly between offsets `lo` and `hi`.
+    private func hasInterveningSameType(
+        _ a: Entity, _ b: Entity, lo: Int, hi: Int, among entities: [Entity]
+    ) -> Bool {
+        for c in entities where c.id != a.id && c.id != b.id {
+            guard c.entityType == a.entityType || c.entityType == b.entityType else { continue }
+            for m in c.mentions where m.startOffset > lo && m.startOffset < hi {
+                return true
+            }
+        }
+        return false
     }
 
     /// First mention pair of `a` and `b` that falls in the same sentence.

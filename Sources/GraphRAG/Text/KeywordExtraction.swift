@@ -13,9 +13,11 @@ public struct TfIdfKeywordExtractor: Sendable {
     public private(set) var totalDocuments: Int
     public let stopwords: Set<String>
 
-    public init(documentFrequencies: [String: Int] = [:], totalDocuments: Int = 1) {
+    public init(documentFrequencies: [String: Int] = [:], totalDocuments: Int = 0) {
         self.documentFrequencies = documentFrequencies
-        self.totalDocuments = max(1, totalDocuments)
+        // Start at the true count (0 for a fresh corpus). The smoothed IDF below
+        // handles an empty corpus without a phantom document.
+        self.totalDocuments = max(0, totalDocuments)
         self.stopwords = TfIdfKeywordExtractor.defaultStopwords
     }
 

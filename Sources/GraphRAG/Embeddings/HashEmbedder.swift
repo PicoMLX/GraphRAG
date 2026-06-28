@@ -46,14 +46,19 @@ public struct HashEmbedder: EmbeddingModel {
     }
 
     private func tokenize(_ text: String) -> [String] {
+        // Split on any non-alphanumeric so "graph-based" hashes as the same two
+        // tokens as the query "graph based" (preserves semantic overlap).
         var tokens: [String] = []
-        for rawWord in text.split(whereSeparator: { $0.isWhitespace }) {
-            var cleaned = ""
-            for ch in rawWord where ch.isLetter || ch.isNumber {
-                cleaned.append(contentsOf: ch.lowercased())
+        var current = ""
+        for ch in text {
+            if ch.isLetter || ch.isNumber {
+                current.append(contentsOf: ch.lowercased())
+            } else if !current.isEmpty {
+                tokens.append(current)
+                current = ""
             }
-            if !cleaned.isEmpty { tokens.append(cleaned) }
         }
+        if !current.isEmpty { tokens.append(current) }
         return tokens
     }
 

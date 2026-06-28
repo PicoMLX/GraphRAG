@@ -38,7 +38,9 @@ public struct PageRank: Sendable {
             outWeight[s] += w
         }
 
-        let d = dampingFactor
+        // Clamp to a valid probability so a misconfigured factor can't produce a
+        // negative teleport term (and negative scores).
+        let d = min(max(dampingFactor, 0), 1)
         let teleport = (1.0 - d) / Double(n)
         var scores = [Double](repeating: 1.0 / Double(n), count: n)
 

@@ -213,8 +213,36 @@ public struct KnowledgeGraph: Sendable, Codable {
             nodeCount: n,
             edgeCount: relationshipCount,
             averageDegree: avgDegree,
-            maxDepth: 0
+            maxDepth: diameter()
         )
+    }
+
+    /// Longest shortest-path (in hops) over the undirected graph — i.e. the
+    /// graph's diameter. O(V·(V+E)); intended for occasional stats calls.
+    private func diameter() -> Int {
+        guard entityOrder.count > 1 else { return 0 }
+        var adjacency: [EntityID: [EntityID]] = [:]
+        for rel in relationships {
+            adjacency[rel.source, default: []].append(rel.target)
+            adjacency[rel.target, default: []].append(rel.source)
+        }
+        var maxDist = 0
+        for start in entityOrder {
+            var dist: [EntityID: Int] = [start: 0]
+            var queue: [EntityID] = [start]
+            var head = 0
+            while head < queue.count {
+                let current = queue[head]
+                head += 1
+                let d = dist[current]!
+                if d > maxDist { maxDist = d }
+                for neighbor in adjacency[current] ?? [] where dist[neighbor] == nil {
+                    dist[neighbor] = d + 1
+                    queue.append(neighbor)
+                }
+            }
+        }
+        return maxDist
     }
 
     // MARK: - Codable
