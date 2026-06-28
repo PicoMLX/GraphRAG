@@ -129,8 +129,32 @@ public struct KnowledgeGraph: Sendable, Codable {
                 entitiesByID[eid] = entity
             }
         }
-        for idx in relationships.indices where !relationships[idx].context.isEmpty {
-            relationships[idx].context.removeAll { removed.contains($0) }
+        // Scrub relationship context; drop a relationship whose only evidence was
+        // a removed chunk (a context-less leftover would expose a stale fact).
+        // Edges that never had context are kept.
+        var survived: [Relationship] = []
+        survived.reserveCapacity(relationships.count)
+        for var rel in relationships {
+            let hadContext = !rel.context.isEmpty
+            rel.context.removeAll { removed.contains($0) }
+            if hadContext && rel.context.isEmpty { continue }
+            survived.append(rel)
+        }
+        if survived.count != relationships.count {
+            relationships = survived
+            rebuildAdjacency()
+        } else {
+            relationships = survived
+        }
+    }
+
+    /// Rebuild the outgoing/incoming index after the `relationships` array changes.
+    private mutating func rebuildAdjacency() {
+        outgoing.removeAll()
+        incoming.removeAll()
+        for (index, rel) in relationships.enumerated() {
+            outgoing[rel.source, default: []].append(index)
+            incoming[rel.target, default: []].append(index)
         }
     }
 

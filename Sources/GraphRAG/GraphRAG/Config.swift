@@ -14,16 +14,6 @@ public struct EmbeddingConfig: Sendable {
     }
 }
 
-public struct GraphConfig: Sendable {
-    public var maxConnections: Int
-    public var threshold: Float
-
-    public init(maxConnections: Int = 10, threshold: Float = 0.8) {
-        self.maxConnections = maxConnections
-        self.threshold = threshold
-    }
-}
-
 public struct TextConfig: Sendable {
     public var languages: [String]
 
@@ -54,7 +44,6 @@ public struct Config: Sendable {
     public var approach: String
 
     public var embedding: EmbeddingConfig
-    public var graph: GraphConfig
     public var text: TextConfig
     public var entity: EntityConfig
 
@@ -67,7 +56,6 @@ public struct Config: Sendable {
         similarityThreshold: Float = 0.8,
         approach: String = "hybrid",
         embedding: EmbeddingConfig = EmbeddingConfig(),
-        graph: GraphConfig = GraphConfig(),
         text: TextConfig = TextConfig(),
         entity: EntityConfig = EntityConfig()
     ) {
@@ -79,7 +67,6 @@ public struct Config: Sendable {
         self.similarityThreshold = similarityThreshold
         self.approach = approach
         self.embedding = embedding
-        self.graph = graph
         self.text = text
         self.entity = entity
     }

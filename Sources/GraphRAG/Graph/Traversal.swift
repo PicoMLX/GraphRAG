@@ -190,14 +190,18 @@ public struct GraphTraversal: Sendable {
         // `<= 0` (not `== 0`) so a negative configured maxDepth yields no expansion.
         if remaining <= 0 { return }
         visited.insert(current)
-        for (neighbor, relationship) in graph.neighbors(of: current) {
-            guard passesFilter(relationship) else { continue }
-            if !visited.contains(neighbor) {
-                path.append(neighbor)
-                pathDFS(graph, current: neighbor, target: target, remaining: remaining - 1,
-                        path: &path, visited: &visited, paths: &paths)
-                path.removeLast()
-            }
+        // Paths are entity-only, so collapse parallel edges (multiple relation
+        // types between the same nodes) to one neighbor to avoid duplicate paths.
+        var uniqueNeighbors: [EntityID] = []
+        var seenNeighbors: Set<EntityID> = []
+        for (neighbor, relationship) in graph.neighbors(of: current) where passesFilter(relationship) {
+            if seenNeighbors.insert(neighbor).inserted { uniqueNeighbors.append(neighbor) }
+        }
+        for neighbor in uniqueNeighbors where !visited.contains(neighbor) {
+            path.append(neighbor)
+            pathDFS(graph, current: neighbor, target: target, remaining: remaining - 1,
+                    path: &path, visited: &visited, paths: &paths)
+            path.removeLast()
         }
         visited.remove(current)
     }
