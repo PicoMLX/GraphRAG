@@ -1,5 +1,7 @@
 # GraphRAG (Swift)
 
+[![CI](https://github.com/PicoMLX/GraphRAG/actions/workflows/ci.yml/badge.svg)](https://github.com/PicoMLX/GraphRAG/actions/workflows/ci.yml)
+
 A Swift port of the Rust crate [`graphrag-rs`](https://github.com/automataIA/graphrag-rs):
 Graph-based Retrieval Augmented Generation. It builds a knowledge graph from
 documents and answers natural-language questions using graph-based context
