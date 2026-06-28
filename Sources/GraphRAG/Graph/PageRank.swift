@@ -33,7 +33,11 @@ public struct PageRank: Sendable {
         var outWeight = [Double](repeating: 0, count: n)
         for rel in graph.relationships {
             guard let s = indexOf[rel.source], let t = indexOf[rel.target] else { continue }
-            let w = Double(max(rel.confidence, 0.0001))
+            // Skip non-positive-confidence edges entirely; otherwise a single
+            // zero-confidence edge would receive all of a node's PageRank mass.
+            // Nodes left with no positive out-edge are handled as dangling.
+            let w = Double(rel.confidence)
+            guard w > 0 else { continue }
             incomingEdges[t].append((s, w))
             outWeight[s] += w
         }

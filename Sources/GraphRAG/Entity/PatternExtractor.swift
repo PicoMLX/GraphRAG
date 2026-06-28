@@ -239,8 +239,11 @@ public struct PatternEntityExtractor: EntityExtracting {
             // "... Acme Inc. Bob ..." splits.
             if PatternEntityExtractor.sentenceAbbreviations.contains(word) {
                 var t = periodIndex + 1
-                while t < chars.count && chars[t] == " " { t += 1 }
-                return t < chars.count && chars[t].isUppercase
+                while t < chars.count && (chars[t] == " " || chars[t] == "\t") { t += 1 }
+                // End of text or a line break is a boundary; otherwise only when
+                // the next word is capitalized.
+                if t >= chars.count || chars[t].isNewline { return true }
+                return chars[t].isUppercase
             }
             return true
         }
@@ -261,38 +264,49 @@ public struct PatternEntityExtractor: EntityExtracting {
             for j in (i + 1)..<entities.count {
                 let a = entities[i]
                 let b = entities[j]
-                // Find a mention pair that shares a sentence; skip the pair if none.
-                guard let (aOff, bOff) = sameSentenceMentions(a, b, sentence: sentence) else {
-                    continue
+                // Evaluate every same-sentence mention pair and keep the most
+                // specific typed relation found — so "Alice met Acme. Alice works
+                // for Acme." yields WORKS_FOR, not just the earlier ASSOCIATED_WITH.
+                var chosen: (relType: String, source: EntityID, target: EntityID)?
+                search: for ma in a.mentions {
+                    for mb in b.mentions
+                    where sentence(of: ma.startOffset) == sentence(of: mb.startOffset) {
+                        let lo = min(ma.startOffset, mb.startOffset)
+                        let hi = max(ma.startOffset, mb.startOffset)
+                        // Proximity heuristic: skip if another same-type entity
+                        // lies between them — the phrase likely belongs to that
+                        // nearer pair. (Offline extractor, not a full classifier.)
+                        if hasInterveningSameType(a, b, lo: lo, hi: hi, among: entities) { continue }
+                        // Keyword context is just the span between the two mentions.
+                        let upper = min(hi + 1, chars.count)
+                        let context = (lo < upper ? String(chars[lo..<upper]) : "").lowercased()
+                        let relType = relationType(for: a.entityType, b.entityType, context: context)
+                        let (source, target) = orient(relType, a, b)
+                        if chosen == nil { chosen = (relType, source.id, target.id) }
+                        if PatternEntityExtractor.specificRelations.contains(relType) {
+                            chosen = (relType, source.id, target.id)
+                            break search
+                        }
+                    }
                 }
-                let lo = min(aOff, bOff)
-                let hi = max(aOff, bOff)
-                // Proximity heuristic: skip the pair if another entity of the same
-                // type as an endpoint lies between them — the connecting phrase
-                // most likely belongs to that nearer pair. (Offline extractor; not
-                // a full relation classifier, so this trades some recall for far
-                // fewer false edges in multi-fact sentences.)
-                if hasInterveningSameType(a, b, lo: lo, hi: hi, among: entities) { continue }
-                // Keyword context is just the span between the two mentions, so a
-                // phrase belonging to a different pair in the sentence can't leak.
-                let upper = min(hi + 1, chars.count)
-                let context = (lo < upper ? String(chars[lo..<upper]) : "").lowercased()
-
-                let relType = relationType(for: a.entityType, b.entityType, context: context)
-                // Orient asymmetric relations by entity role, independent of the
-                // order the spans happened to appear in the text.
-                let (source, target) = orient(relType, a, b)
-                let key = "\(source.id.raw)|\(target.id.raw)|\(relType)"
+                guard let result = chosen else { continue }
+                let key = "\(result.source.raw)|\(result.target.raw)|\(result.relType)"
                 if seen.contains(key) { continue }
                 seen.insert(key)
                 relationships.append(
                     Relationship(
-                        source: source.id, target: target.id, relationType: relType,
-                        confidence: 0.6, context: [chunk.id]))
+                        source: result.source, target: result.target,
+                        relationType: result.relType, confidence: 0.6, context: [chunk.id]))
             }
         }
         return relationships
     }
+
+    /// Typed relations preferred over the generic ASSOCIATED_WITH/KNOWS/RELATED_TO.
+    static let specificRelations: Set<String> = [
+        "WORKS_FOR", "LEADS", "BORN_IN", "LOCATED_IN", "HEADQUARTERED_IN",
+        "MARRIED_TO", "COLLEAGUE_OF",
+    ]
 
     /// Whether an entity (other than `a`/`b`) of the same type as one endpoint
     /// has a mention strictly between offsets `lo` and `hi`.
@@ -306,18 +320,6 @@ public struct PatternEntityExtractor: EntityExtracting {
             }
         }
         return false
-    }
-
-    /// First mention pair of `a` and `b` that falls in the same sentence.
-    private func sameSentenceMentions(
-        _ a: Entity, _ b: Entity, sentence: (Int) -> Int
-    ) -> (Int, Int)? {
-        for ma in a.mentions {
-            for mb in b.mentions where sentence(ma.startOffset) == sentence(mb.startOffset) {
-                return (ma.startOffset, mb.startOffset)
-            }
-        }
-        return nil
     }
 
     /// Order (source, target) for a typed relation by the entities' roles.
