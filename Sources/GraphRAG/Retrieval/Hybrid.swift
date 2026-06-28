@@ -209,26 +209,3 @@ public struct HybridRetriever: Sendable {
     }
 }
 
-/// Retrieval-tuning knobs mirroring the Rust `RetrievalConfig`.
-///
-/// Top-k and similarity threshold live on the top-level `Config`
-/// (`topKResults` / `similarityThreshold`) to avoid two sources of truth; the
-/// fields here govern graph-expansion scoring.
-public struct RetrievalConfig: Sendable {
-    public var maxExpansionDepth: Int
-    public var entityWeight: Float
-    public var chunkWeight: Float
-    public var graphWeight: Float
-
-    public init(
-        maxExpansionDepth: Int = 2,
-        entityWeight: Float = 0.4,
-        chunkWeight: Float = 0.4,
-        graphWeight: Float = 0.2
-    ) {
-        self.maxExpansionDepth = maxExpansionDepth
-        self.entityWeight = entityWeight
-        self.chunkWeight = chunkWeight
-        self.graphWeight = graphWeight
-    }
-}

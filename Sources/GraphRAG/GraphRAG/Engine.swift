@@ -120,6 +120,11 @@ public actor GraphRAG {
 
             let keptIDs = Set(entities.map(\.id))
             for entity in entities { graph.addEntity(entity) }
+            // `extractRelationships == false` gates insertion here. We don't try
+            // to also suppress the extractor's own relationship work: the
+            // EntityExtracting protocol returns entities and relationships from a
+            // single call, so skipping the LLM's relationship prompting would
+            // require a protocol/prompt change. Deferred deliberately.
             if config.entity.extractRelationships {
                 // Scope to entities that survived THIS chunk's cap — not global
                 // graph state — so the cap can't be defeated by an id that

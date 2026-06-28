@@ -274,7 +274,11 @@ public struct PatternEntityExtractor: EntityExtracting {
         for k in 0..<chars.count {
             sentenceID[k] = sid
             let c = chars[k]
-            if c == "!" || c == "?" || (c == "." && periodIsSentenceEnd(k)) { sid += 1 }
+            // A newline also separates facts (line-per-fact chunks without
+            // terminal punctuation).
+            if c.isNewline || c == "!" || c == "?" || (c == "." && periodIsSentenceEnd(k)) {
+                sid += 1
+            }
         }
         sentenceID[chars.count] = sid
         func sentence(of offset: Int) -> Int { sentenceID[max(0, min(offset, chars.count))] }
@@ -298,9 +302,23 @@ public struct PatternEntityExtractor: EntityExtracting {
                         // Proximity heuristic: skip if another same-type entity
                         // lies between them — the phrase likely belongs to that
                         // nearer pair. (Offline extractor, not a full classifier.)
+                        //
+                        // Known limitation: this also skips coordinated subjects
+                        // ("Alice and Bob are employed by Acme" drops Alice→Acme).
+                        // Relaxing it to allow coordination would reintroduce
+                        // cross-fact false edges ("Alice works for Acme and Bob
+                        // works for Beta" → Alice→Beta), so precision is preferred.
                         if hasInterveningSameType(a, b, lo: lo, hi: hi, among: entities) { continue }
-                        // Keyword context is just the span between the two mentions.
-                        let upper = min(hi + 1, chars.count)
+                        // Context is the span between the mentions. If no other
+                        // entity mention follows the later one in this sentence,
+                        // extend to the sentence end so a trailing cue ("... are
+                        // married") is seen — without leaking into a later pair.
+                        var upper = min(hi + 1, chars.count)
+                        if !entityMentionFollows(after: hi, sentence: sentence, entities: entities, a: a, b: b) {
+                            var e = hi
+                            while e < chars.count && sentence(of: e) == sentence(of: hi) { e += 1 }
+                            upper = e
+                        }
                         let context = (lo < upper ? String(chars[lo..<upper]) : "").lowercased()
                         let relType = relationType(for: a.entityType, b.entityType, context: context)
                         let (source, target) = orient(relType, a, b)
@@ -329,6 +347,20 @@ public struct PatternEntityExtractor: EntityExtracting {
         "WORKS_FOR", "LEADS", "BORN_IN", "LOCATED_IN", "HEADQUARTERED_IN",
         "MARRIED_TO", "COLLEAGUE_OF",
     ]
+
+    /// Whether an entity other than `a`/`b` has a mention after `offset` within
+    /// the same sentence (used to decide if a trailing cue window is safe).
+    private func entityMentionFollows(
+        after offset: Int, sentence: (Int) -> Int, entities: [Entity], a: Entity, b: Entity
+    ) -> Bool {
+        let s = sentence(offset)
+        for c in entities where c.id != a.id && c.id != b.id {
+            for m in c.mentions where m.startOffset > offset && sentence(m.startOffset) == s {
+                return true
+            }
+        }
+        return false
+    }
 
     /// Whether an entity (other than `a`/`b`) of the same type as one endpoint
     /// has a mention strictly between offsets `lo` and `hi`.

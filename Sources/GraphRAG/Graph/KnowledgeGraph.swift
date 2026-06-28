@@ -222,6 +222,8 @@ public struct KnowledgeGraph: Sendable, Codable {
     public func findRelationshipPath(
         from source: EntityID, to target: EntityID, maxDepth: Int = 5
     ) -> [EntityID]? {
+        // Endpoints must exist; otherwise even the self-path is meaningless.
+        guard contains(source), contains(target) else { return nil }
         if source == target { return [source] }
         var visited: Set<EntityID> = [source]
         var queue: [(EntityID, [EntityID])] = [(source, [source])]

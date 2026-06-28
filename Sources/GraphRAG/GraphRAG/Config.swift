@@ -57,7 +57,6 @@ public struct Config: Sendable {
     public var graph: GraphConfig
     public var text: TextConfig
     public var entity: EntityConfig
-    public var retrieval: RetrievalConfig
 
     public init(
         outputDir: String = "./output",
@@ -70,8 +69,7 @@ public struct Config: Sendable {
         embedding: EmbeddingConfig = EmbeddingConfig(),
         graph: GraphConfig = GraphConfig(),
         text: TextConfig = TextConfig(),
-        entity: EntityConfig = EntityConfig(),
-        retrieval: RetrievalConfig = RetrievalConfig()
+        entity: EntityConfig = EntityConfig()
     ) {
         self.outputDir = outputDir
         self.chunkSize = chunkSize
@@ -84,7 +82,6 @@ public struct Config: Sendable {
         self.graph = graph
         self.text = text
         self.entity = entity
-        self.retrieval = retrieval
     }
 
     public static let `default` = Config()
