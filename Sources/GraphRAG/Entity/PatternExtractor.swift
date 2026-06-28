@@ -91,6 +91,13 @@ public struct PatternEntityExtractor: EntityExtracting {
                 while true {
                     // advance to end of current word
                     while j < n && !chars[j].isWhitespace { j += 1 }
+                    // A separating punctuation (comma/semicolon/colon) ends the
+                    // run so "Alice, Bob" stays two entities rather than merging.
+                    if j > runStart, let last = chars[j - 1].unicodeScalars.first,
+                        CharacterSet(charactersIn: ",;:").contains(last)
+                    {
+                        break
+                    }
                     // peek next word
                     var k = j
                     while k < n && chars[k] == " " { k += 1 }

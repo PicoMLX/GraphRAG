@@ -165,6 +165,9 @@ public struct TextProcessor: Sendable {
         guard chunkSize > 0 else {
             throw GraphRAGError.config(message: "chunk_size must be > 0")
         }
+        guard chunkOverlap >= 0 else {
+            throw GraphRAGError.config(message: "chunk_overlap must be >= 0")
+        }
         guard chunkOverlap < chunkSize else {
             throw GraphRAGError.config(message: "chunk_overlap must be < chunk_size")
         }

@@ -17,6 +17,10 @@ public actor GraphRAG {
     private let textProcessor: TextProcessor
     private var retriever: HybridRetriever
     private var isBuilt: Bool = false
+    private var isBuilding: Bool = false
+    /// Bumped on every ingestion so a `build()` can detect documents added while
+    /// it was suspended at an `await` (actors are reentrant).
+    private var ingestionVersion: Int = 0
 
     /// Designated initializer.
     public init(
@@ -27,13 +31,23 @@ public actor GraphRAG {
     ) throws {
         self.config = config
         self.graph = KnowledgeGraph()
-        self.embedder = embedder ?? HashEmbedder(dimension: config.embedding.dimension)
+        self.embedder = embedder ?? GraphRAG.defaultEmbedder(for: config)
         self.languageModel = languageModel
         self.extractor = extractor ?? PatternEntityExtractor(minConfidence: config.entity.minConfidence)
         self.textProcessor = try TextProcessor(
             chunkSize: config.chunkSize, chunkOverlap: config.chunkOverlap)
         self.retriever = HybridRetriever(
             config: HybridConfig(maxCandidates: max(100, config.topKResults * 10)))
+    }
+
+    /// Pick the default embedder honoring `config.embedding.backend` when no
+    /// embedder was injected.
+    private static func defaultEmbedder(for config: Config) -> any EmbeddingModel {
+        if config.embedding.backend.lowercased() == "ollama" {
+            return OllamaEmbedder(
+                config: OllamaConfig(embeddingDimension: config.embedding.dimension))
+        }
+        return HashEmbedder(dimension: config.embedding.dimension)
     }
 
     // MARK: - Ingestion
@@ -48,15 +62,19 @@ public actor GraphRAG {
         return id
     }
 
-    /// Add a pre-built document, chunking it if it has no chunks yet.
+    /// Add a pre-built document, chunking it if it has no chunks yet. Replacing a
+    /// document with the same id drops the previous version's chunks first, so
+    /// stale text can't linger in the index.
     public func addDocument(_ document: Document) {
         var doc = document
         if doc.chunks.isEmpty {
             doc.chunks = textProcessor.chunk(doc)
         }
+        graph.removeChunks(forDocument: doc.id)
         graph.addDocument(doc)
         for chunk in doc.chunks { graph.addChunk(chunk) }
         isBuilt = false
+        ingestionVersion += 1
     }
 
     // MARK: - Build
@@ -65,10 +83,26 @@ public actor GraphRAG {
     /// chunks, and build the retrieval index.
     public func build() async throws {
         guard graph.documentCount > 0 else { throw GraphRAGError.noDocuments }
+        // Actors are reentrant at `await`, so refuse overlapping builds.
+        guard !isBuilding else {
+            throw GraphRAGError.validation(message: "A build is already in progress")
+        }
+        isBuilding = true
+        // Any failure below leaves the system unbuilt: ask() must require a fresh,
+        // successful build rather than querying half-rebuilt state.
+        isBuilt = false
+        defer { isBuilding = false }
+
+        let startVersion = ingestionVersion
         graph.clearEntitiesAndRelationships()
 
+        // Operate on a fixed snapshot of chunk ids so documents ingested mid-build
+        // (which bump ingestionVersion) don't get half-processed this round.
+        let chunkIDs = graph.chunks.map(\.id)
+
         // Stage 1: entity & relationship extraction per chunk.
-        for chunk in graph.chunks {
+        for id in chunkIDs {
+            guard let chunk = graph.chunk(id) else { continue }
             let (entities, relationships) = try await extractor.extract(from: chunk)
             for entity in entities { graph.addEntity(entity) }
             if config.entity.extractRelationships {
@@ -83,7 +117,8 @@ public actor GraphRAG {
         }
 
         // Stage 2: embed chunks.
-        for chunk in graph.chunks {
+        for id in chunkIDs {
+            guard let chunk = graph.chunk(id) else { continue }
             let embedding = try await embedder.embed(chunk.content)
             var updated = chunk
             updated.embedding = embedding
@@ -94,7 +129,9 @@ public actor GraphRAG {
         retriever.clear()
         retriever.index(graph: graph)
 
-        isBuilt = true
+        // Only declare success if no new documents arrived during the build;
+        // otherwise the index is already stale and a rebuild is required.
+        isBuilt = (ingestionVersion == startVersion)
     }
 
     // MARK: - Query

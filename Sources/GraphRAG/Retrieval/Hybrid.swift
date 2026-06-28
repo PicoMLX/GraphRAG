@@ -102,10 +102,17 @@ public struct HybridRetriever: Sendable {
     ///   - queryEmbedding: Optional query vector (for semantic search).
     ///   - limit: Number of fused results to return.
     public func search(query: String, queryEmbedding: [Float]?, limit: Int) -> [HybridSearchResult] {
+        // A negative limit would trap in `prefix`; treat anything <= 0 as empty.
+        guard limit > 0 else { return [] }
         let keyword = bm25.search(query, limit: config.maxCandidates)
             .map { (id: $0.id, score: $0.score) }
+        // Drop non-positive cosine hits: the vector store always returns its
+        // nearest `maxCandidates`, so for an off-topic/empty query (no keyword
+        // matches and every similarity <= 0) RRF would otherwise surface
+        // arbitrary chunks instead of letting `ask()` take its no-results path.
         let semantic: [(id: String, score: Float)] =
-            queryEmbedding.map { vectors.search($0, k: config.maxCandidates) } ?? []
+            queryEmbedding.map { vectors.search($0, k: config.maxCandidates).filter { $0.score > 0 } }
+            ?? []
 
         let fused = fuse(semantic: semantic, keyword: keyword)
         // RRF scores are rank-based and inherently small (≈ 1/(k+rank)); the

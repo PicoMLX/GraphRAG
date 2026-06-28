@@ -64,7 +64,10 @@ public struct TfIdfKeywordExtractor: Sendable {
 
     private func inverseDocumentFrequency(_ term: String) -> Float {
         let df = documentFrequencies[term] ?? 1
-        let idf = log(Float(totalDocuments) / Float(df))
+        // Smoothed IDF: stays strictly positive even for an empty corpus
+        // (N = 1, df = 1 -> 1.0), so ranking falls back to term frequency rather
+        // than collapsing every score to zero.
+        let idf = log(Float(totalDocuments + 1) / Float(df + 1)) + 1.0
         return max(idf, 0.0)
     }
 

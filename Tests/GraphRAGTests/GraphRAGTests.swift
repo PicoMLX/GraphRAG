@@ -220,3 +220,55 @@ import Testing
         _ = try await rag.ask("anything")
     }
 }
+
+// MARK: - Review regressions
+
+@Test func negativeChunkOverlapRejected() {
+    #expect(throws: GraphRAGError.self) {
+        _ = try TextProcessor(chunkSize: 100, chunkOverlap: -10)
+    }
+}
+
+@Test func replacingDocumentRemovesStaleChunks() async throws {
+    let rag = try GraphRAGBuilder().withChunkSize(500).withChunkOverlap(50).build()
+    let id = DocumentID("fixed-id")
+    await rag.addDocument(Document(id: id, title: "v1", content: "First version about apples."))
+    await rag.addDocument(Document(id: id, title: "v2", content: "Second version about oranges."))
+    try await rag.build()
+    let stats = await rag.stats()
+    // Only the replacement's chunk(s) should remain, not both versions'.
+    #expect(stats.documentCount == 1)
+    #expect(stats.chunkCount == 1)
+    let answer = try await rag.ask("oranges")
+    #expect(!answer.text.lowercased().contains("apples"))
+}
+
+@Test func dfsDoesNotRecordEdgesBeyondMaxDepth() {
+    var graph = KnowledgeGraph()
+    for name in ["a", "b", "c", "d"] {
+        graph.addEntity(Entity(id: EntityID(name), name: name, entityType: "X"))
+    }
+    graph.addRelationship(Relationship(source: "a", target: "b", relationType: "R", confidence: 1))
+    graph.addRelationship(Relationship(source: "b", target: "c", relationType: "R", confidence: 1))
+    graph.addRelationship(Relationship(source: "c", target: "d", relationType: "R", confidence: 1))
+
+    let traversal = GraphTraversal(config: TraversalConfig(maxDepth: 2, minRelationshipStrength: 0.5))
+    let result = traversal.dfs(graph, from: "a")
+    let visited = Set(result.entities)
+    #expect(!visited.contains(EntityID("d")))
+    // Every recorded edge must connect two visited nodes.
+    for rel in result.relationships {
+        #expect(visited.contains(rel.source))
+        #expect(visited.contains(rel.target))
+    }
+}
+
+@Test func negativeTopKDoesNotCrashSearch() async throws {
+    let config = Config(topKResults: -5)
+    let rag = try GraphRAGBuilder().withConfig(config).build()
+    await rag.addDocument(text: "Graphs connect entities and relationships.")
+    try await rag.build()
+    let answer = try await rag.ask("graphs")
+    // Should degrade to the no-results answer rather than trapping.
+    #expect(answer.sources.isEmpty)
+}

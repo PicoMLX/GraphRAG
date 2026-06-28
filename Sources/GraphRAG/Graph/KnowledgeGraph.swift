@@ -86,6 +86,15 @@ public struct KnowledgeGraph: Sendable, Codable {
         chunksByID[chunk.id] = chunk
     }
 
+    /// Remove all chunks belonging to a document (used when a document is
+    /// replaced so stale chunks don't survive).
+    public mutating func removeChunks(forDocument documentID: DocumentID) {
+        let removed = Set(chunkOrder.filter { chunksByID[$0]?.documentID == documentID })
+        guard !removed.isEmpty else { return }
+        chunkOrder.removeAll { removed.contains($0) }
+        for id in removed { chunksByID.removeValue(forKey: id) }
+    }
+
     /// Drop all entities and relationships, preserving documents and chunks.
     public mutating func clearEntitiesAndRelationships() {
         entitiesByID.removeAll()

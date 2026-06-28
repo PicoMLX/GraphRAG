@@ -118,8 +118,13 @@ public struct GraphRAGBuilder: Sendable {
 
     /// Construct the configured `GraphRAG` engine.
     public func build() throws -> GraphRAG {
+        // Honor an Ollama backend requested either via `withOllamaEmbeddings()`
+        // or directly through `config.embedding.backend` (e.g. a deserialized or
+        // hand-built Config).
+        let wantsOllamaEmbeddings =
+            useOllamaEmbeddings || config.embedding.backend.lowercased() == "ollama"
         let embedder: any EmbeddingModel =
-            useOllamaEmbeddings
+            wantsOllamaEmbeddings
             ? OllamaEmbedder(config: ollamaConfig)
             : HashEmbedder(dimension: config.embedding.dimension)
 

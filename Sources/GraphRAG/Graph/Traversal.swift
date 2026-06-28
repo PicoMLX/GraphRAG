@@ -111,6 +111,9 @@ public struct GraphTraversal: Sendable {
         visited.insert(current)
         result.distances[current] = depth
         result.entities.append(current)
+        // Stop expanding at the depth limit so we never record an edge to a node
+        // that won't itself be visited (matches BFS and the documented limit).
+        guard depth < config.maxDepth else { return }
         for (neighbor, relationship) in graph.neighbors(of: current) {
             guard passesFilter(relationship) else { continue }
             if !visited.contains(neighbor) {
