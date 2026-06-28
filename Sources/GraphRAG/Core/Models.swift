@@ -35,9 +35,11 @@ public struct TextChunk: Codable, Sendable, Identifiable, Equatable {
     public var id: ChunkID
     public var documentID: DocumentID
     public var content: String
-    /// Byte offset of the chunk start within the original document content.
+    /// Character (grapheme) offset of the chunk start within the original
+    /// document content — not a UTF-8 byte offset.
     public var startOffset: Int
-    /// Byte offset of the chunk end within the original document content.
+    /// Character (grapheme) offset of the chunk end within the original document
+    /// content — not a UTF-8 byte offset.
     public var endOffset: Int
     /// Optional dense embedding for semantic search.
     public var embedding: [Float]?

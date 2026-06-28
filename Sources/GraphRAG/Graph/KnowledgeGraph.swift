@@ -118,34 +118,41 @@ public struct KnowledgeGraph: Sendable, Codable {
             doc.chunks.removeAll { removed.contains($0.id) }
             documentsByID[documentID] = doc
         }
-        // Scrub evidence pointing at the removed chunks: drop entity mentions and
-        // relationship-context entries that reference them, so traversal/stats and
-        // saved JSON don't expose facts from a document version that's gone.
+        // Scrub evidence pointing at the removed chunks. Drop mentions that
+        // reference them; if an entity's mentions are entirely exhausted (no
+        // independent evidence remains), remove the entity too so it doesn't
+        // linger in stats/traversal/JSON from a document version that's gone.
+        var removedEntities: Set<EntityID> = []
         for eid in entityOrder {
             guard var entity = entitiesByID[eid], !entity.mentions.isEmpty else { continue }
             let kept = entity.mentions.filter { !removed.contains($0.chunkID) }
-            if kept.count != entity.mentions.count {
+            if kept.isEmpty {
+                removedEntities.insert(eid)
+            } else if kept.count != entity.mentions.count {
                 entity.mentions = kept
                 entitiesByID[eid] = entity
             }
         }
+        if !removedEntities.isEmpty {
+            for eid in removedEntities { entitiesByID.removeValue(forKey: eid) }
+            entityOrder.removeAll { removedEntities.contains($0) }
+        }
         // Scrub relationship context; drop a relationship whose only evidence was
-        // a removed chunk (a context-less leftover would expose a stale fact).
-        // Edges that never had context are kept.
+        // a removed chunk, or whose endpoint entity was just removed (a leftover
+        // would expose a stale fact). Edges that never had context are kept.
         var survived: [Relationship] = []
         survived.reserveCapacity(relationships.count)
         for var rel in relationships {
+            if removedEntities.contains(rel.source) || removedEntities.contains(rel.target) {
+                continue
+            }
             let hadContext = !rel.context.isEmpty
             rel.context.removeAll { removed.contains($0) }
             if hadContext && rel.context.isEmpty { continue }
             survived.append(rel)
         }
-        if survived.count != relationships.count {
-            relationships = survived
-            rebuildAdjacency()
-        } else {
-            relationships = survived
-        }
+        relationships = survived
+        rebuildAdjacency()
     }
 
     /// Rebuild the outgoing/incoming index after the `relationships` array changes.

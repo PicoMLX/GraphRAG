@@ -145,15 +145,19 @@ public actor GraphRAG {
             }
         }
 
-        // Stage 2: embed chunks.
-        for id in chunkIDs {
-            guard let chunk = graph.chunk(id) else { continue }
-            let embedding = try await embedder.embed(chunk.content)
-            // Skip if the chunk was replaced during the embedding await (content
-            // changed), so we never attach an old-content embedding to new text.
-            if var current = graph.chunk(id), current.content == chunk.content {
-                current.embedding = embedding
-                graph.addChunk(current)
+        // Stage 2: embed chunks — skipped entirely for keyword-only retrieval,
+        // which never uses embeddings (avoids embedder latency/failure, e.g. a
+        // remote Ollama embedder, when only BM25 is used).
+        if config.approach.lowercased() != "keyword" {
+            for id in chunkIDs {
+                guard let chunk = graph.chunk(id) else { continue }
+                let embedding = try await embedder.embed(chunk.content)
+                // Skip if the chunk was replaced during the embedding await
+                // (content changed), so we never attach an old-content embedding.
+                if var current = graph.chunk(id), current.content == chunk.content {
+                    current.embedding = embedding
+                    graph.addChunk(current)
+                }
             }
         }
 
