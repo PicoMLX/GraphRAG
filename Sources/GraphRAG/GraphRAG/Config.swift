@@ -25,13 +25,9 @@ public struct GraphConfig: Sendable {
 }
 
 public struct TextConfig: Sendable {
-    public var chunkSize: Int
-    public var overlap: Int
     public var languages: [String]
 
-    public init(chunkSize: Int = 1000, overlap: Int = 200, languages: [String] = ["en"]) {
-        self.chunkSize = chunkSize
-        self.overlap = overlap
+    public init(languages: [String] = ["en"]) {
         self.languages = languages
     }
 }

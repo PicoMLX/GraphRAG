@@ -101,18 +101,31 @@ public struct HybridRetriever: Sendable {
     ///   - query: The raw query text (for BM25).
     ///   - queryEmbedding: Optional query vector (for semantic search).
     ///   - limit: Number of fused results to return.
-    public func search(query: String, queryEmbedding: [Float]?, limit: Int) -> [HybridSearchResult] {
+    ///   - semanticThreshold: Minimum cosine similarity for a semantic hit.
+    ///   - includeKeyword: Include BM25 results (false for a semantic-only approach).
+    ///   - includeSemantic: Include vector results (false for a keyword-only approach).
+    public func search(
+        query: String,
+        queryEmbedding: [Float]?,
+        limit: Int,
+        semanticThreshold: Float = 0,
+        includeKeyword: Bool = true,
+        includeSemantic: Bool = true
+    ) -> [HybridSearchResult] {
         // A negative limit would trap in `prefix`; treat anything <= 0 as empty.
         guard limit > 0 else { return [] }
-        let keyword = bm25.search(query, limit: config.maxCandidates)
-            .map { (id: $0.id, score: $0.score) }
-        // Drop non-positive cosine hits: the vector store always returns its
-        // nearest `maxCandidates`, so for an off-topic/empty query (no keyword
-        // matches and every similarity <= 0) RRF would otherwise surface
-        // arbitrary chunks instead of letting `ask()` take its no-results path.
+        let keyword: [(id: String, score: Float)] =
+            includeKeyword
+            ? bm25.search(query, limit: config.maxCandidates).map { (id: $0.id, score: $0.score) }
+            : []
+        // Drop non-positive cosine hits (off-topic protection: the vector store
+        // always returns its nearest `maxCandidates`) and anything below the
+        // caller's similarity threshold.
         let semantic: [(id: String, score: Float)] =
-            queryEmbedding.map { vectors.search($0, k: config.maxCandidates).filter { $0.score > 0 } }
-            ?? []
+            (includeSemantic ? queryEmbedding : nil).map {
+                vectors.search($0, k: config.maxCandidates)
+                    .filter { $0.score > 0 && $0.score >= semanticThreshold }
+            } ?? []
 
         let fused = fuse(semantic: semantic, keyword: keyword)
         // RRF scores are rank-based and inherently small (≈ 1/(k+rank)); the

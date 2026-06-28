@@ -164,11 +164,15 @@ public struct GraphAnalytics: Sendable {
 
     // MARK: - Global
 
-    /// Graph density: `2E / (n(n-1))`.
+    /// Graph density: `2E / (n(n-1))`, where `E` is the number of unique
+    /// undirected pairs. Counting unique pairs (rather than raw stored edges)
+    /// keeps density in `[0, 1]` even with reciprocal or multiple typed edges
+    /// between the same two entities.
     public func density() -> Float {
         let n = nodes.count
         guard n > 1 else { return 0 }
-        return Float(2 * graph.relationshipCount) / Float(n * (n - 1))
+        let uniqueEdges = adjacency.values.reduce(0) { $0 + $1.count } / 2
+        return Float(2 * uniqueEdges) / Float(n * (n - 1))
     }
 
     /// Local clustering coefficient: fraction of a node's neighbour pairs that

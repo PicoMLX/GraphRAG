@@ -123,23 +123,29 @@ public struct KnowledgeGraph: Sendable, Codable {
     /// Bidirectional neighbors: for every incident edge, the other endpoint and
     /// the relationship. Deduplicated per (neighbor, relationType).
     public func neighbors(of id: EntityID) -> [(neighbor: EntityID, relationship: Relationship)] {
-        var result: [(neighbor: EntityID, relationship: Relationship)] = []
-        var seen: Set<String> = []
-        for idx in outgoing[id] ?? [] {
-            let target = relationships[idx].target
-            let key = "\(target.raw)|\(relationships[idx].relationType)"
-            if seen.insert(key).inserted {
-                result.append((target, relationships[idx]))
+        // Keep the highest-confidence edge per (neighbor, relationType) so a weak
+        // A->B can't hide a stronger reciprocal B->A from strength-filtered
+        // traversals.
+        var bestIndexByKey: [String: Int] = [:]
+        var order: [String] = []
+        func consider(_ index: Int, neighbor: EntityID) {
+            let key = "\(neighbor.raw)|\(relationships[index].relationType)"
+            if let existing = bestIndexByKey[key] {
+                if relationships[index].confidence > relationships[existing].confidence {
+                    bestIndexByKey[key] = index
+                }
+            } else {
+                bestIndexByKey[key] = index
+                order.append(key)
             }
         }
-        for idx in incoming[id] ?? [] {
-            let source = relationships[idx].source
-            let key = "\(source.raw)|\(relationships[idx].relationType)"
-            if seen.insert(key).inserted {
-                result.append((source, relationships[idx]))
-            }
+        for idx in outgoing[id] ?? [] { consider(idx, neighbor: relationships[idx].target) }
+        for idx in incoming[id] ?? [] { consider(idx, neighbor: relationships[idx].source) }
+        return order.map { key in
+            let rel = relationships[bestIndexByKey[key]!]
+            let neighbor = rel.source == id ? rel.target : rel.source
+            return (neighbor, rel)
         }
-        return result
     }
 
     /// All relationships where `id` is the source or target.

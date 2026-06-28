@@ -33,14 +33,12 @@ public struct GraphRAGBuilder: Sendable {
     public func withChunkSize(_ size: Int) -> Self {
         var copy = self
         copy.config.chunkSize = size
-        copy.config.text.chunkSize = size
         return copy
     }
 
     public func withChunkOverlap(_ overlap: Int) -> Self {
         var copy = self
         copy.config.chunkOverlap = overlap
-        copy.config.text.overlap = overlap
         return copy
     }
 

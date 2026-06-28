@@ -103,17 +103,30 @@ public actor GraphRAG {
         // Stage 1: entity & relationship extraction per chunk.
         for id in chunkIDs {
             guard let chunk = graph.chunk(id) else { continue }
-            let (entities, relationships) = try await extractor.extract(from: chunk)
+            var (entities, relationships) = try await extractor.extract(from: chunk)
+
+            // Honor the per-chunk entity cap, keeping the highest-confidence ones.
+            if config.maxEntitiesPerChunk > 0, entities.count > config.maxEntitiesPerChunk {
+                entities = Array(
+                    entities.sorted { $0.confidence > $1.confidence }
+                        .prefix(config.maxEntitiesPerChunk))
+            }
+
             for entity in entities { graph.addEntity(entity) }
             if config.entity.extractRelationships {
-                for relationship in relationships { graph.addRelationship(relationship) }
+                // Keep only relationships whose endpoints exist in the graph
+                // (drops edges to entities removed by the per-chunk cap).
+                for relationship in relationships
+                where graph.contains(relationship.source) && graph.contains(relationship.target) {
+                    graph.addRelationship(relationship)
+                }
             }
-            // Record which entities were found in this chunk.
-            if !entities.isEmpty {
-                var updated = chunk
-                updated.entities = entities.map(\.id)
-                graph.addChunk(updated)
-            }
+
+            // Always record the chunk's entity ids — writing an empty list clears
+            // stale ids from a prior build when extraction now yields nothing.
+            var updated = chunk
+            updated.entities = entities.map(\.id)
+            graph.addChunk(updated)
         }
 
         // Stage 2: embed chunks.
@@ -140,9 +153,7 @@ public actor GraphRAG {
     public func ask(_ query: String) async throws -> Answer {
         guard isBuilt else { throw GraphRAGError.notInitialized }
 
-        let queryEmbedding = try await embedder.embed(query)
-        let results = retriever.search(
-            query: query, queryEmbedding: queryEmbedding, limit: config.topKResults)
+        let results = try await runRetrieval(query, limit: config.topKResults)
 
         guard !results.isEmpty else {
             return Answer(
@@ -173,9 +184,23 @@ public actor GraphRAG {
     /// Hybrid search without answer synthesis.
     public func search(_ query: String, limit: Int? = nil) async throws -> [HybridSearchResult] {
         guard isBuilt else { throw GraphRAGError.notInitialized }
-        let queryEmbedding = try await embedder.embed(query)
+        return try await runRetrieval(query, limit: limit ?? config.topKResults)
+    }
+
+    /// Run retrieval honoring the configured `approach` (hybrid / keyword /
+    /// semantic) and `retrieval.similarityThreshold`.
+    private func runRetrieval(_ query: String, limit: Int) async throws -> [HybridSearchResult] {
+        let approach = config.approach.lowercased()
+        let includeKeyword = approach != "semantic"
+        let includeSemantic = approach != "keyword"
+        let queryEmbedding = includeSemantic ? try await embedder.embed(query) : nil
         return retriever.search(
-            query: query, queryEmbedding: queryEmbedding, limit: limit ?? config.topKResults)
+            query: query,
+            queryEmbedding: queryEmbedding,
+            limit: limit,
+            semanticThreshold: config.retrieval.similarityThreshold,
+            includeKeyword: includeKeyword,
+            includeSemantic: includeSemantic)
     }
 
     // MARK: - Introspection
