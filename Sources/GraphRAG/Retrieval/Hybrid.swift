@@ -79,7 +79,13 @@ public struct HybridRetriever: Sendable {
     public mutating func index(id: String, content: String, embedding: [Float]?) {
         contents[id] = content
         bm25.index(id: id, content: content)
-        if let embedding { vectors.add(id: id, vector: embedding) }
+        if let embedding {
+            vectors.add(id: id, vector: embedding)
+        } else {
+            // Drop any vector from a previous version so semantic search can't
+            // return this id using a stale embedding.
+            vectors.remove(id: id)
+        }
     }
 
     /// Index all chunks of a knowledge graph.
@@ -201,24 +207,22 @@ public struct HybridRetriever: Sendable {
 }
 
 /// Retrieval-tuning knobs mirroring the Rust `RetrievalConfig`.
+///
+/// Top-k and similarity threshold live on the top-level `Config`
+/// (`topKResults` / `similarityThreshold`) to avoid two sources of truth; the
+/// fields here govern graph-expansion scoring.
 public struct RetrievalConfig: Sendable {
-    public var topK: Int
-    public var similarityThreshold: Float
     public var maxExpansionDepth: Int
     public var entityWeight: Float
     public var chunkWeight: Float
     public var graphWeight: Float
 
     public init(
-        topK: Int = 10,
-        similarityThreshold: Float = 0.7,
         maxExpansionDepth: Int = 2,
         entityWeight: Float = 0.4,
         chunkWeight: Float = 0.4,
         graphWeight: Float = 0.2
     ) {
-        self.topK = topK
-        self.similarityThreshold = similarityThreshold
         self.maxExpansionDepth = maxExpansionDepth
         self.entityWeight = entityWeight
         self.chunkWeight = chunkWeight

@@ -103,7 +103,9 @@ public actor GraphRAG {
         // Stage 1: entity & relationship extraction per chunk.
         for id in chunkIDs {
             guard let chunk = graph.chunk(id) else { continue }
-            var (entities, relationships) = try await extractor.extract(from: chunk)
+            let extracted = try await extractor.extract(from: chunk)
+            var entities = extracted.entities
+            let relationships = extracted.relationships
 
             // Honor the per-chunk entity cap, keeping the highest-confidence ones.
             if config.maxEntitiesPerChunk > 0, entities.count > config.maxEntitiesPerChunk {
@@ -122,20 +124,26 @@ public actor GraphRAG {
                 }
             }
 
-            // Always record the chunk's entity ids — writing an empty list clears
-            // stale ids from a prior build when extraction now yields nothing.
-            var updated = chunk
-            updated.entities = entities.map(\.id)
-            graph.addChunk(updated)
+            // Re-fetch before writing: if the document was replaced during the
+            // extraction await, write entity ids onto the current chunk rather
+            // than clobbering new content with the pre-await snapshot. Always
+            // writing (even an empty list) clears stale ids from a prior build.
+            if var current = graph.chunk(id) {
+                current.entities = entities.map(\.id)
+                graph.addChunk(current)
+            }
         }
 
         // Stage 2: embed chunks.
         for id in chunkIDs {
             guard let chunk = graph.chunk(id) else { continue }
             let embedding = try await embedder.embed(chunk.content)
-            var updated = chunk
-            updated.embedding = embedding
-            graph.addChunk(updated)
+            // Re-fetch so a document replaced during the embedding await isn't
+            // overwritten by the stale snapshot.
+            if var current = graph.chunk(id) {
+                current.embedding = embedding
+                graph.addChunk(current)
+            }
         }
 
         // Stage 3: build the hybrid retrieval index.
@@ -188,7 +196,7 @@ public actor GraphRAG {
     }
 
     /// Run retrieval honoring the configured `approach` (hybrid / keyword /
-    /// semantic) and `retrieval.similarityThreshold`.
+    /// semantic) and the top-level `similarityThreshold`.
     private func runRetrieval(_ query: String, limit: Int) async throws -> [HybridSearchResult] {
         let approach = config.approach.lowercased()
         let includeKeyword = approach != "semantic"
@@ -198,7 +206,7 @@ public actor GraphRAG {
             query: query,
             queryEmbedding: queryEmbedding,
             limit: limit,
-            semanticThreshold: config.retrieval.similarityThreshold,
+            semanticThreshold: config.similarityThreshold,
             includeKeyword: includeKeyword,
             includeSemantic: includeSemantic)
     }

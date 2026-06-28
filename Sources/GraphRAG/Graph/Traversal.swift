@@ -132,6 +132,9 @@ public struct GraphTraversal: Sendable {
         result.distances[center] = 0
         result.entities.append(center)
         var currentLayer = [center]
+        // De-duplicate emitted edges: neighbors of adjacent layers can revisit
+        // the same edge, which would otherwise overcount evidence/degrees.
+        var emittedEdges: Set<String> = []
 
         var hop = 1
         while hop <= k && !currentLayer.isEmpty {
@@ -139,7 +142,11 @@ public struct GraphTraversal: Sendable {
             for entity in currentLayer {
                 for (neighbor, relationship) in graph.neighbors(of: entity) {
                     guard passesFilter(relationship) else { continue }
-                    result.relationships.append(relationship)
+                    let edgeKey =
+                        "\(relationship.source.raw)|\(relationship.target.raw)|\(relationship.relationType)"
+                    if emittedEdges.insert(edgeKey).inserted {
+                        result.relationships.append(relationship)
+                    }
                     if !visited.contains(neighbor) {
                         visited.insert(neighbor)
                         result.distances[neighbor] = hop
@@ -180,7 +187,8 @@ public struct GraphTraversal: Sendable {
             paths.append(path)
             return
         }
-        if remaining == 0 { return }
+        // `<= 0` (not `== 0`) so a negative configured maxDepth yields no expansion.
+        if remaining <= 0 { return }
         visited.insert(current)
         for (neighbor, relationship) in graph.neighbors(of: current) {
             guard passesFilter(relationship) else { continue }

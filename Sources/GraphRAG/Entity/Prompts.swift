@@ -121,10 +121,27 @@ public enum Prompts {
         """
 
     /// Fill `{key}` placeholders in `template` with `values`.
+    ///
+    /// Scans the template once: a `{key}` is replaced only when `key` is a known
+    /// value, and inserted values are never re-scanned. This keeps literal braces
+    /// in the template (e.g. JSON examples) intact and prevents a value that
+    /// itself contains `{query}`-style text from being substituted further.
     public static func fill(_ template: String, _ values: [String: String]) -> String {
-        var result = template
-        for (key, value) in values {
-            result = result.replacingOccurrences(of: "{\(key)}", with: value)
+        var result = ""
+        var i = template.startIndex
+        while i < template.endIndex {
+            if template[i] == "{",
+                let close = template[template.index(after: i)...].firstIndex(of: "}")
+            {
+                let key = String(template[template.index(after: i)..<close])
+                if let value = values[key] {
+                    result += value
+                    i = template.index(after: close)
+                    continue
+                }
+            }
+            result.append(template[i])
+            i = template.index(after: i)
         }
         return result
     }

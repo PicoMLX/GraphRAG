@@ -91,12 +91,20 @@ public struct PatternEntityExtractor: EntityExtracting {
                 while true {
                     // advance to end of current word
                     while j < n && !chars[j].isWhitespace { j += 1 }
-                    // A separating punctuation (comma/semicolon/colon) ends the
-                    // run so "Alice, Bob" stays two entities rather than merging.
-                    if j > runStart, let last = chars[j - 1].unicodeScalars.first,
-                        CharacterSet(charactersIn: ",;:").contains(last)
-                    {
-                        break
+                    // Clause punctuation (comma/semicolon/colon) ends the run so
+                    // "Alice, Bob" stays two entities. Sentence punctuation
+                    // (./!/?) also ends it ("Acme. Bob") — unless the word is a
+                    // known abbreviation/title like "Dr." so "Dr. Smith" merges.
+                    if j > runStart, let last = chars[j - 1].unicodeScalars.first {
+                        if CharacterSet(charactersIn: ",;:").contains(last) { break }
+                        if CharacterSet(charactersIn: ".!?").contains(last) {
+                            var ws = j - 1
+                            while ws > runStart && !chars[ws - 1].isWhitespace { ws -= 1 }
+                            let word = String(chars[ws..<j])
+                                .trimmingCharacters(in: CharacterSet(charactersIn: ".!?"))
+                                .lowercased()
+                            if !PatternEntityExtractor.abbreviations.contains(word) { break }
+                        }
                     }
                     // peek next word
                     var k = j
@@ -154,7 +162,11 @@ public struct PatternEntityExtractor: EntityExtracting {
     }
 
     private func isWordStart(_ chars: [Character], _ i: Int) -> Bool {
-        i == 0 || chars[i - 1].isWhitespace
+        if i == 0 { return true }
+        let prev = chars[i - 1]
+        // Start a run after whitespace or opening punctuation, so quoted or
+        // parenthesized names (e.g. "Ada Lovelace" or (Paris)) aren't skipped.
+        return prev.isWhitespace || "\"'([{".contains(prev)
     }
 
     // MARK: - Classification
@@ -214,16 +226,44 @@ public struct PatternEntityExtractor: EntityExtracting {
                 let a = entities[i]
                 let b = entities[j]
                 let relType = relationType(for: a.entityType, b.entityType, context: context)
-                let key = "\(a.id.raw)|\(b.id.raw)|\(relType)"
+                // Orient asymmetric relations by entity role, independent of the
+                // order the spans happened to appear in the text.
+                let (source, target) = orient(relType, a, b)
+                let key = "\(source.id.raw)|\(target.id.raw)|\(relType)"
                 if seen.contains(key) { continue }
                 seen.insert(key)
                 relationships.append(
                     Relationship(
-                        source: a.id, target: b.id, relationType: relType,
+                        source: source.id, target: target.id, relationType: relType,
                         confidence: 0.6, context: [chunk.id]))
             }
         }
         return relationships
+    }
+
+    /// Order (source, target) for a typed relation by the entities' roles.
+    /// Symmetric relations keep their text order.
+    private func orient(_ relType: String, _ a: Entity, _ b: Entity) -> (Entity, Entity) {
+        func pick(_ source: String, _ target: String) -> (Entity, Entity)? {
+            if a.entityType == source && b.entityType == target { return (a, b) }
+            if b.entityType == source && a.entityType == target { return (b, a) }
+            return nil
+        }
+        switch relType {
+        case "WORKS_FOR", "LEADS":
+            return pick("PERSON", "ORGANIZATION") ?? (a, b)
+        case "BORN_IN":
+            return pick("PERSON", "LOCATION") ?? (a, b)
+        case "HEADQUARTERED_IN":
+            return pick("ORGANIZATION", "LOCATION") ?? (a, b)
+        case "LOCATED_IN":
+            // Whichever endpoint is the location is the target.
+            if a.entityType == "LOCATION" { return (b, a) }
+            if b.entityType == "LOCATION" { return (a, b) }
+            return (a, b)
+        default:
+            return (a, b)  // ASSOCIATED_WITH / KNOWS / MARRIED_TO / RELATED_TO ...
+        }
     }
 
     private func relationType(for a: String, _ b: String, context: String) -> String {
@@ -261,6 +301,12 @@ public struct PatternEntityExtractor: EntityExtracting {
         "berlin", "washington", "boston", "chicago",
     ]
     static let personTitles: Set<String> = ["dr", "prof", "mr", "mrs", "ms"]
+    /// Words ending in `.` that should NOT end a Title-Case run (titles and
+    /// common abbreviations), so e.g. "Dr. Smith" / "Acme Inc." stay merged.
+    static let abbreviations: Set<String> = [
+        "dr", "prof", "mr", "mrs", "ms", "jr", "sr", "st", "vs", "etc",
+        "inc", "corp", "ltd", "co",
+    ]
     static let blocklist: Set<String> = [
         "the", "and", "but", "or", "chapter", "section", "however", "therefore",
         "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",

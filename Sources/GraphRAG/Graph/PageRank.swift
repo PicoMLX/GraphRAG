@@ -42,7 +42,7 @@ public struct PageRank: Sendable {
         let teleport = (1.0 - d) / Double(n)
         var scores = [Double](repeating: 1.0 / Double(n), count: n)
 
-        for _ in 0..<maxIterations {
+        for _ in 0..<max(0, maxIterations) {
             // Dangling-node mass: nodes with no out-edges redistribute uniformly.
             var danglingMass = 0.0
             for i in 0..<n where outWeight[i] == 0 { danglingMass += scores[i] }
@@ -77,6 +77,7 @@ public struct PageRank: Sendable {
 
     /// Top-`k` entities by PageRank score, highest first.
     public func topEntities(_ graph: KnowledgeGraph, k: Int) -> [(id: EntityID, score: Double)] {
+        guard k > 0 else { return [] }
         let scores = compute(graph)
         return scores.sorted { lhs, rhs in
             if lhs.value == rhs.value { return lhs.key.raw < rhs.key.raw }

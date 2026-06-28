@@ -15,7 +15,6 @@ public struct GraphRAGBuilder: Sendable {
     private var config: Config
     private var ollamaConfig: OllamaConfig
     private var useOllamaChat: Bool = false
-    private var useOllamaEmbeddings: Bool = false
 
     public init(config: Config = .default) {
         self.config = config
@@ -45,14 +44,12 @@ public struct GraphRAGBuilder: Sendable {
     public func withTopK(_ k: Int) -> Self {
         var copy = self
         copy.config.topKResults = k
-        copy.config.retrieval.topK = k
         return copy
     }
 
     public func withSimilarityThreshold(_ threshold: Float) -> Self {
         var copy = self
         copy.config.similarityThreshold = threshold
-        copy.config.retrieval.similarityThreshold = threshold
         return copy
     }
 
@@ -74,7 +71,6 @@ public struct GraphRAGBuilder: Sendable {
     public func withHashEmbeddings() -> Self {
         var copy = self
         copy.config.embedding.backend = "hash"
-        copy.useOllamaEmbeddings = false
         return copy
     }
 
@@ -97,7 +93,6 @@ public struct GraphRAGBuilder: Sendable {
         copy.ollamaConfig.embeddingDimension = dimension
         copy.config.embedding.backend = "ollama"
         copy.config.embedding.dimension = dimension
-        copy.useOllamaEmbeddings = true
         return copy
     }
 
@@ -116,15 +111,17 @@ public struct GraphRAGBuilder: Sendable {
 
     /// Construct the configured `GraphRAG` engine.
     public func build() throws -> GraphRAG {
-        // Honor an Ollama backend requested either via `withOllamaEmbeddings()`
-        // or directly through `config.embedding.backend` (e.g. a deserialized or
-        // hand-built Config).
-        let wantsOllamaEmbeddings =
-            useOllamaEmbeddings || config.embedding.backend.lowercased() == "ollama"
-        let embedder: any EmbeddingModel =
-            wantsOllamaEmbeddings
-            ? OllamaEmbedder(config: ollamaConfig)
-            : HashEmbedder(dimension: config.embedding.dimension)
+        // The embedding backend is driven solely by `config.embedding.backend`,
+        // so a later `withConfig(...)` can switch it back to hash (no sticky
+        // flag). Sync the Ollama embedder's dimension from the config.
+        let embedder: any EmbeddingModel
+        if config.embedding.backend.lowercased() == "ollama" {
+            var oc = ollamaConfig
+            oc.embeddingDimension = config.embedding.dimension
+            embedder = OllamaEmbedder(config: oc)
+        } else {
+            embedder = HashEmbedder(dimension: config.embedding.dimension)
+        }
 
         let languageModel: (any LanguageModel)? =
             useOllamaChat ? OllamaClient(config: ollamaConfig) : nil
