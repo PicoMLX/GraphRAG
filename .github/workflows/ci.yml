@@ -14,8 +14,8 @@ jobs:
     name: Build & Test (Linux / Swift)
     runs-on: ubuntu-latest
     # Official Swift toolchain image. Must be >= the package's
-    # swift-tools-version (6.3); bump this tag when raising the manifest.
-    container: swift:6.3
+    # swift-tools-version (6.1); bump this tag when raising the manifest.
+    container: swift:6.1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
