@@ -36,10 +36,13 @@ public struct InMemorySemanticSearcher: SemanticSearcher {
             config: HybridConfig(maxCandidates: max(100, documents.count)))
         var sourceChunksByID: [String: [String]] = [:]
         for doc in documents {
-            // `??` can't wrap an async default (its autoclosure isn't async), so
-            // branch explicitly to embed only when no precomputed vector exists.
+            // Reuse a precomputed vector only when its dimension matches this
+            // embedder — a mismatch (e.g. a graph saved under a different
+            // embedder) would make cosine similarity silently return 0. Branch
+            // explicitly since `??` can't wrap an async default (its autoclosure
+            // isn't async).
             let embedding: [Float]
-            if let precomputed = doc.embedding {
+            if let precomputed = doc.embedding, precomputed.count == embedder.dimension {
                 embedding = precomputed
             } else {
                 embedding = try await embedder.embed(doc.content)

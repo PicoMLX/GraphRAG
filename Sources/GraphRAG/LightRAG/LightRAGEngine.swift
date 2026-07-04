@@ -95,6 +95,13 @@ public struct LightRAGEngine: Sendable {
     /// Run dual-level retrieval for `query`. The two stores are built once per
     /// engine (cached across calls) rather than rebuilt each query.
     public func retrieve(_ query: String, topK: Int = 10) async throws -> DualRetrievalResults {
+        // A nonpositive topK yields nothing — return before building/embedding the
+        // stores, so a no-op request never triggers corpus-wide embedding work.
+        guard topK > 0 else {
+            return DualRetrievalResults(
+                highLevelChunks: [], lowLevelChunks: [], mergedChunks: [],
+                keywords: DualLevelKeywords())
+        }
         let stores = try await cache.stores()
         let extractor = KeywordExtractor(model: languageModel, config: keywordConfig)
         let retriever = DualLevelRetriever(

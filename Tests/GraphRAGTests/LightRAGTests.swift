@@ -18,6 +18,14 @@ private struct MockSearcher: SemanticSearcher {
     }
 }
 
+/// Throws on any embedding call — used to prove a code path never embeds.
+private struct FailingEmbedder: EmbeddingModel {
+    func embed(_ text: String) async throws -> [Float] {
+        throw GraphRAGError.validation(message: "embedder should not be called")
+    }
+    var dimension: Int { 8 }
+}
+
 private func triangleGraph() -> KnowledgeGraph {
     var graph = KnowledgeGraph()
     let names = ["a1", "a2", "a3", "b1", "b2", "b3"]
@@ -113,6 +121,14 @@ private func triangleGraph() -> KnowledgeGraph {
     let keywords = await extractor.extract("alpha beta gamma delta epsilon")
     #expect(keywords.highLevel.count == 2)
     #expect(keywords.lowLevel.count == 2)
+}
+
+@Test func lightRAGRetrieveNonPositiveTopKSkipsStoreBuild() async throws {
+    // The failing embedder would throw if the stores were built; a topK <= 0
+    // request must short-circuit before that.
+    let engine = LightRAGEngine(graph: KnowledgeGraph(), embedder: FailingEmbedder())
+    let results = try await engine.retrieve("q", topK: 0)
+    #expect(results.mergedChunks.isEmpty)
 }
 
 @Test func dualRetrievalNonPositiveTopKReturnsEmpty() async throws {
