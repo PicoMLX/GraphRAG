@@ -23,6 +23,7 @@ private struct FailingEmbedder: EmbeddingModel {
     func embed(_ text: String) async throws -> [Float] {
         throw GraphRAGError.validation(message: "embedder should not be called")
     }
+    func isAvailable() async -> Bool { true }
     var dimension: Int { 8 }
 }
 
