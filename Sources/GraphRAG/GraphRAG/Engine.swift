@@ -238,6 +238,23 @@ public actor GraphRAG {
     /// Direct access to the underlying knowledge graph (a value-type snapshot).
     public func knowledgeGraph() -> KnowledgeGraph { graph }
 
+    /// Detect entity communities in the current graph via Leiden.
+    public func detectCommunities(config: LeidenConfig = LeidenConfig()) -> CommunityDetectionResult {
+        LeidenCommunityDetector(config: config).detect(graph)
+    }
+
+    /// A LightRAG dual-level retrieval engine over the current graph snapshot,
+    /// wired to this instance's embedder and (optional) language model.
+    public func lightRAG(
+        config: DualRetrievalConfig = DualRetrievalConfig(),
+        keywordConfig: KeywordExtractorConfig = KeywordExtractorConfig(),
+        leidenConfig: LeidenConfig = LeidenConfig()
+    ) -> LightRAGEngine {
+        LightRAGEngine(
+            graph: graph, embedder: embedder, languageModel: languageModel,
+            config: config, keywordConfig: keywordConfig, leidenConfig: leidenConfig)
+    }
+
     /// Persist the knowledge graph to JSON.
     public func save(toJSON path: String) throws { try graph.save(toJSON: path) }
 
