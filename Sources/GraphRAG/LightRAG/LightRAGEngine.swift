@@ -44,7 +44,10 @@ private actor LightRAGStoreCache {
         let embedder = self.embedder
         let graph = self.graph
         let options = self.searchOptions
-        let task = Task { () throws -> Stores in
+        // Detached so the build (summary generation + on-demand embedding) runs
+        // on the global pool rather than the cache actor's executor, keeping the
+        // actor responsive to concurrent callers.
+        let task = Task.detached { () throws -> Stores in
             async let low = LightRAG.chunkSearcher(
                 graph: graph, embedder: embedder, options: options)
             async let high = LightRAG.communitySearcher(
