@@ -123,7 +123,7 @@ searched independently, and the hits are merged — `interleave` (default),
 `highFirst`, `lowFirst`, or `weighted`.
 
 ```swift
-let engine = await rag.lightRAG()
+let engine = try await rag.lightRAG()   // requires a successful build() first
 let answer = try await engine.ask("Who worked on the Analytical Engine?")
 print(answer.text)
 

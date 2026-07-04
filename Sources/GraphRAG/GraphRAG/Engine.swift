@@ -238,19 +238,27 @@ public actor GraphRAG {
     /// Direct access to the underlying knowledge graph (a value-type snapshot).
     public func knowledgeGraph() -> KnowledgeGraph { graph }
 
-    /// Detect entity communities in the current graph via Leiden.
-    public func detectCommunities(config: LeidenConfig = LeidenConfig()) -> CommunityDetectionResult {
-        LeidenCommunityDetector(config: config).detect(graph)
+    /// Detect entity communities in the current graph via Leiden. Requires a
+    /// successful `build()` first, so communities reflect extracted entities and
+    /// not a raw or stale graph (mirrors the `ask`/`search` guard).
+    public func detectCommunities(config: LeidenConfig = LeidenConfig()) throws
+        -> CommunityDetectionResult
+    {
+        guard isBuilt else { throw GraphRAGError.notInitialized }
+        return LeidenCommunityDetector(config: config).detect(graph)
     }
 
     /// A LightRAG dual-level retrieval engine over the current graph snapshot,
-    /// wired to this instance's embedder and (optional) language model.
+    /// wired to this instance's embedder and (optional) language model. Requires
+    /// a successful `build()` first, so the engine can't hand out answers from a
+    /// raw or partially rebuilt graph (mirrors the `ask`/`search` guard).
     public func lightRAG(
         config: DualRetrievalConfig = DualRetrievalConfig(),
         keywordConfig: KeywordExtractorConfig = KeywordExtractorConfig(),
         leidenConfig: LeidenConfig = LeidenConfig()
-    ) -> LightRAGEngine {
-        LightRAGEngine(
+    ) throws -> LightRAGEngine {
+        guard isBuilt else { throw GraphRAGError.notInitialized }
+        return LightRAGEngine(
             graph: graph, embedder: embedder, languageModel: languageModel,
             config: config, keywordConfig: keywordConfig, leidenConfig: leidenConfig)
     }

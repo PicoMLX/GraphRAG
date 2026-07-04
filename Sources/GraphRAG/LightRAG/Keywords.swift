@@ -57,7 +57,7 @@ public struct KeywordExtractor: Sendable {
     /// back to a simple query tokenization.
     public func extract(_ query: String) async -> DualLevelKeywords {
         guard let model, await model.isAvailable() else {
-            return KeywordExtractor.fallback(query)
+            return capped(KeywordExtractor.fallback(query))
         }
         let prompt = buildPrompt(query)
         do {
@@ -68,7 +68,8 @@ public struct KeywordExtractor: Sendable {
         } catch {
             // fall through to fallback
         }
-        return KeywordExtractor.fallback(query)
+        // The fallback is capped too, so `maxKeywords` holds even without an LLM.
+        return capped(KeywordExtractor.fallback(query))
     }
 
     /// Cap the combined keyword count at `maxKeywords`, keeping high-level first.

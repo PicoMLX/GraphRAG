@@ -170,7 +170,7 @@ private func triangleGraph() -> KnowledgeGraph {
             """)
     try await rag.build()
 
-    let engine = await rag.lightRAG()
+    let engine = try await rag.lightRAG()
     let communities = engine.detectCommunities()
     #expect(communities.communityCount >= 1)
 
