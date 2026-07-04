@@ -30,7 +30,10 @@ public struct InMemorySemanticSearcher: SemanticSearcher {
         documents: [(id: String, content: String, embedding: [Float]?, sourceChunks: [String])],
         embedder: any EmbeddingModel
     ) async throws -> InMemorySemanticSearcher {
-        var retriever = HybridRetriever()
+        // Let the candidate pool cover the whole corpus so a large `topK` isn't
+        // silently capped below the number of available documents.
+        var retriever = HybridRetriever(
+            config: HybridConfig(maxCandidates: max(100, documents.count)))
         var sourceChunksByID: [String: [String]] = [:]
         for doc in documents {
             // `??` can't wrap an async default (its autoclosure isn't async), so
@@ -115,11 +118,13 @@ public enum LightRAG {
     /// and deduplicated in first-seen order. These are the evidence for a
     /// high-level community hit.
     ///
-    /// Uses both representations a `KnowledgeGraph` may carry: chunks annotated
-    /// with member entities (`TextChunk.entities`) and the members' own mention
-    /// evidence (`Entity.mentions`). The build pipeline populates the former, but
-    /// externally-constructed graphs may only carry the latter — either alone
-    /// still yields grounding.
+    /// Uses every evidence representation a `KnowledgeGraph` may carry: chunks
+    /// annotated with member entities (`TextChunk.entities`), the members' own
+    /// mention evidence (`Entity.mentions`), and the context chunks of the
+    /// relationships connecting members (`Relationship.context`). The build
+    /// pipeline populates chunk annotations, but externally-constructed graphs
+    /// may carry only mentions or only relationship context — any one alone still
+    /// yields grounding.
     public static func communitySourceChunks(
         _ community: Community, graph: KnowledgeGraph
     ) -> [String] {
@@ -137,6 +142,12 @@ public enum LightRAG {
         for member in community.members {
             guard let entity = graph.entity(member) else { continue }
             for mention in entity.mentions { add(mention.chunkID.raw) }
+        }
+        // Context chunks of relationships internal to the community — the
+        // evidence behind the relationship types the summary is built from.
+        for relationship in graph.relationships
+        where memberSet.contains(relationship.source) && memberSet.contains(relationship.target) {
+            for chunkID in relationship.context { add(chunkID.raw) }
         }
         return ids
     }

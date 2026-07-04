@@ -98,6 +98,14 @@ public struct DualLevelRetriever: Sendable {
     public func retrieve(_ query: String, topK: Int = 10) async throws -> DualRetrievalResults {
         let keywords = await keywordExtractor.extract(query)
 
+        // A nonpositive topK means "no results" — return before searching, since
+        // some `SemanticSearcher`s limit with `prefix(topK)`, which traps on a
+        // negative count (mirrors merge's own `topK > 0` guard).
+        guard topK > 0 else {
+            return DualRetrievalResults(
+                highLevelChunks: [], lowLevelChunks: [], mergedChunks: [], keywords: keywords)
+        }
+
         // Each level searches with its joined keywords as a single query. The two
         // levels are independent, so run them concurrently.
         let highQuery = keywords.highLevel.joined(separator: " ")

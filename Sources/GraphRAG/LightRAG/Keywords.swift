@@ -59,7 +59,7 @@ public struct KeywordExtractor: Sendable {
     /// back to a simple query tokenization.
     public func extract(_ query: String) async -> DualLevelKeywords {
         guard let model, await model.isAvailable() else {
-            return capped(KeywordExtractor.fallback(query))
+            return KeywordExtractor.fallback(query, limit: config.maxKeywords)
         }
         let prompt = buildPrompt(query)
         do {
@@ -70,8 +70,9 @@ public struct KeywordExtractor: Sendable {
         } catch {
             // fall through to fallback
         }
-        // The fallback is capped too, so `maxKeywords` holds even without an LLM.
-        return capped(KeywordExtractor.fallback(query))
+        // The fallback caps each level independently, so `maxKeywords` holds even
+        // without an LLM.
+        return KeywordExtractor.fallback(query, limit: config.maxKeywords)
     }
 
     /// Cap the combined keyword count at `maxKeywords`, keeping high-level first.
@@ -150,20 +151,24 @@ public struct KeywordExtractor: Sendable {
     ]
 
     /// Deterministic fallback: query tokens minus common stopwords, deduplicated
-    /// case-insensitively in first-seen order, up to 10. If every token is a
-    /// stopword, fall back to the raw tokens so retrieval still runs rather than
-    /// searching with an empty query.
+    /// case-insensitively in first-seen order, capped to `limit` per level. If
+    /// every token is a stopword, fall back to the raw tokens so retrieval still
+    /// runs rather than searching with an empty query.
+    ///
+    /// Tokens are split on non-alphanumerics — the same way BM25 and
+    /// `HashEmbedder` tokenize the index — so a term like "graph-based" becomes
+    /// `["graph", "based"]` and actually matches indexed content instead of a
+    /// collapsed "graphbased" that matches nothing.
     ///
     /// Without an LLM there's no theme/entity split, so the same terms populate
-    /// both levels — otherwise the high-level (community) store would never be
-    /// searched in the default offline path, and global/theme questions would
-    /// silently degrade to chunk search only.
-    static func fallback(_ query: String) -> DualLevelKeywords {
+    /// both levels (each within `limit`) — otherwise the high-level (community)
+    /// store would never be searched in the default offline path, or one level
+    /// would be starved when the shared budget is spent on the other.
+    static func fallback(_ query: String, limit: Int) -> DualLevelKeywords {
         let tokens =
             query
-            .split(whereSeparator: { $0.isWhitespace })
-            .map { String($0.filter { $0.isLetter || $0.isNumber }) }
-            .filter { !$0.isEmpty }
+            .split(whereSeparator: { !($0.isLetter || $0.isNumber) })
+            .map(String.init)
 
         func deduped(_ words: [String]) -> [String] {
             var seen: Set<String> = []
@@ -171,7 +176,7 @@ public struct KeywordExtractor: Sendable {
         }
 
         let meaningful = deduped(tokens.filter { !stopwords.contains($0.lowercased()) })
-        let chosen = Array((meaningful.isEmpty ? deduped(tokens) : meaningful).prefix(10))
+        let chosen = Array((meaningful.isEmpty ? deduped(tokens) : meaningful).prefix(max(0, limit)))
         return DualLevelKeywords(highLevel: chosen, lowLevel: chosen)
     }
 }

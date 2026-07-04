@@ -97,6 +97,36 @@ private func triangleGraph() -> KnowledgeGraph {
     #expect(!keywords.lowLevel.isEmpty)  // not left empty for an all-stopword query
 }
 
+@Test func keywordFallbackSplitsOnPunctuation() async {
+    // Tokens must split like the index (BM25 / HashEmbedder) so they match.
+    let extractor = KeywordExtractor(model: nil)
+    let keywords = await extractor.extract("graph-based retrieval")
+    #expect(keywords.lowLevel.contains("graph"))
+    #expect(keywords.lowLevel.contains("based"))
+    #expect(!keywords.lowLevel.contains("graphbased"))
+}
+
+@Test func keywordFallbackCapsEachLevelIndependently() async {
+    // A small combined-looking limit must not starve one level (both stay used).
+    let extractor = KeywordExtractor(
+        model: nil, config: KeywordExtractorConfig(maxKeywords: 2))
+    let keywords = await extractor.extract("alpha beta gamma delta epsilon")
+    #expect(keywords.highLevel.count == 2)
+    #expect(keywords.lowLevel.count == 2)
+}
+
+@Test func dualRetrievalNonPositiveTopKReturnsEmpty() async throws {
+    let high = MockSearcher(results: [LightRAGResult(id: "h", content: "h", score: 1)])
+    let low = MockSearcher(results: [LightRAGResult(id: "l", content: "l", score: 1)])
+    let extractor = KeywordExtractor(
+        model: MockLLM(response: #"{"high_level":["t"],"low_level":["d"]}"#))
+    let retriever = DualLevelRetriever(
+        keywordExtractor: extractor, highLevelStore: high, lowLevelStore: low)
+    // Must not forward a negative topK to the stores (some use prefix, which traps).
+    let results = try await retriever.retrieve("query", topK: -1)
+    #expect(results.mergedChunks.isEmpty)
+}
+
 @Test func keywordExtractorClampsNegativeMaxKeywords() async {
     // A negative limit must not trap in prefix(_:); it reads as "no keywords".
     let extractor = KeywordExtractor(
