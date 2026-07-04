@@ -132,6 +132,14 @@ let results = try await engine.retrieve("...", topK: 10)
 print(results.highLevelChunks, results.lowLevelChunks, results.mergedChunks)
 ```
 
+An engine created via `rag.lightRAG()` inherits that instance's retrieval
+settings from `Config`, so it stays consistent with `rag.ask`/`rag.search`: it
+honors `topKResults` (the default when `retrieve`/`ask` are called without an
+explicit `topK`), applies `similarityThreshold` to semantic hits, and drops BM25
+when `approach == "semantic"`. `approach == "keyword"` is rejected — LightRAG's
+dual-level design requires embeddings. Constructing `LightRAGEngine` directly
+uses permissive defaults (full hybrid, no threshold, `topK` 10).
+
 ## Testing
 
 ```bash

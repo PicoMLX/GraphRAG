@@ -4,6 +4,22 @@
 
 import Foundation
 
+/// Retrieval knobs a LightRAG store honors. When the engine is created via
+/// `GraphRAG.lightRAG()`, these mirror the owning instance's `Config` so LightRAG
+/// stays consistent with `GraphRAG.ask`/`search` on the same graph. Constructed
+/// directly, LightRAG uses the permissive defaults (full hybrid, no threshold).
+public struct LightRAGSearchOptions: Sendable {
+    /// Minimum cosine score for a semantic hit (0 keeps all positive matches).
+    public var semanticThreshold: Float
+    /// Whether BM25 keyword scoring contributes (`false` = semantic-only).
+    public var includeKeyword: Bool
+
+    public init(semanticThreshold: Float = 0, includeKeyword: Bool = true) {
+        self.semanticThreshold = semanticThreshold
+        self.includeKeyword = includeKeyword
+    }
+}
+
 /// A `SemanticSearcher` backed by a `HybridRetriever` over a fixed corpus.
 ///
 /// Each indexed document carries the real chunk ids it stands for
@@ -13,22 +29,26 @@ public struct InMemorySemanticSearcher: SemanticSearcher {
     private let retriever: HybridRetriever
     private let embedder: any EmbeddingModel
     private let sourceChunksByID: [String: [String]]
+    private let options: LightRAGSearchOptions
 
     private init(
         retriever: HybridRetriever, embedder: any EmbeddingModel,
-        sourceChunksByID: [String: [String]]
+        sourceChunksByID: [String: [String]], options: LightRAGSearchOptions
     ) {
         self.retriever = retriever
         self.embedder = embedder
         self.sourceChunksByID = sourceChunksByID
+        self.options = options
     }
 
     /// Build a searcher, reusing each document's precomputed embedding when one
     /// is supplied and embedding on demand otherwise. `sourceChunks` records the
-    /// real chunk ids each document grounds to.
+    /// real chunk ids each document grounds to; `options` carries the semantic
+    /// threshold / keyword toggle applied at search time.
     public static func build(
         documents: [(id: String, content: String, embedding: [Float]?, sourceChunks: [String])],
-        embedder: any EmbeddingModel
+        embedder: any EmbeddingModel,
+        options: LightRAGSearchOptions = LightRAGSearchOptions()
     ) async throws -> InMemorySemanticSearcher {
         // Let the candidate pool cover the whole corpus so a large `topK` isn't
         // silently capped below the number of available documents.
@@ -51,21 +71,20 @@ public struct InMemorySemanticSearcher: SemanticSearcher {
             sourceChunksByID[doc.id] = doc.sourceChunks
         }
         return InMemorySemanticSearcher(
-            retriever: retriever, embedder: embedder, sourceChunksByID: sourceChunksByID)
+            retriever: retriever, embedder: embedder,
+            sourceChunksByID: sourceChunksByID, options: options)
     }
 
     public func search(_ query: String, topK: Int) async throws -> [LightRAGResult] {
-        // Design note: LightRAG is a self-contained retrieval subsystem with its
-        // own configuration (DualRetrievalConfig / KeywordExtractorConfig). It
-        // uses full hybrid (BM25 + cosine) search with the default similarity
-        // threshold on purpose and does NOT inherit the owning GraphRAG's
-        // hybrid-path Config (`approach`, `similarityThreshold`) — those govern
-        // `GraphRAG.ask`/`search`, a different retrieval path. This keeps the two
-        // strategies independent; a caller who wants semantic-only or a stricter
-        // threshold uses the GraphRAG path (or we can thread those settings in if
-        // that inheritance is desired).
+        // Apply the inherited retrieval settings: the semantic threshold filters
+        // weak cosine hits, and `includeKeyword == false` (from `approach ==
+        // "semantic"`) suppresses BM25 so results match the owning GraphRAG's
+        // configured behavior. Defaults keep full hybrid with no threshold.
         let queryEmbedding = try await embedder.embed(query)
-        let hits = retriever.search(query: query, queryEmbedding: queryEmbedding, limit: topK)
+        let hits = retriever.search(
+            query: query, queryEmbedding: queryEmbedding, limit: topK,
+            semanticThreshold: options.semanticThreshold,
+            includeKeyword: options.includeKeyword)
         return hits.map {
             LightRAGResult(
                 id: $0.id, content: $0.content, score: $0.score,
@@ -79,20 +98,23 @@ public enum LightRAG {
     /// Low-level (entity/detail) store: the document chunks themselves. Each
     /// chunk grounds to itself.
     public static func chunkSearcher(
-        graph: KnowledgeGraph, embedder: any EmbeddingModel
+        graph: KnowledgeGraph, embedder: any EmbeddingModel,
+        options: LightRAGSearchOptions = LightRAGSearchOptions()
     ) async throws -> InMemorySemanticSearcher {
         // Reuse the embeddings computed during the graph build, when present.
         let documents = graph.chunks.map {
             (id: $0.id.raw, content: $0.content, embedding: $0.embedding, sourceChunks: [$0.id.raw])
         }
-        return try await InMemorySemanticSearcher.build(documents: documents, embedder: embedder)
+        return try await InMemorySemanticSearcher.build(
+            documents: documents, embedder: embedder, options: options)
     }
 
     /// High-level (theme/global) store: one short summary per detected community.
     /// A community grounds to the real chunks that mention its member entities,
     /// so answers built from high-level hits still cite actual evidence chunks.
     public static func communitySearcher(
-        graph: KnowledgeGraph, communities: CommunityDetectionResult, embedder: any EmbeddingModel
+        graph: KnowledgeGraph, communities: CommunityDetectionResult, embedder: any EmbeddingModel,
+        options: LightRAGSearchOptions = LightRAGSearchOptions()
     ) async throws -> InMemorySemanticSearcher {
         // Summaries are derived text with no precomputed embedding — embed on demand.
         let documents = communities.communities.map { community in
@@ -103,7 +125,8 @@ public enum LightRAG {
                 sourceChunks: communitySourceChunks(community, graph: graph)
             )
         }
-        return try await InMemorySemanticSearcher.build(documents: documents, embedder: embedder)
+        return try await InMemorySemanticSearcher.build(
+            documents: documents, embedder: embedder, options: options)
     }
 
     /// A short textual theme for a community: member names plus the relationship
