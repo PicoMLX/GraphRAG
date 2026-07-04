@@ -238,6 +238,40 @@ public actor GraphRAG {
     /// Direct access to the underlying knowledge graph (a value-type snapshot).
     public func knowledgeGraph() -> KnowledgeGraph { graph }
 
+    /// Detect entity communities in the current graph via Leiden. Requires a
+    /// successful `build()` first, so communities reflect extracted entities and
+    /// not a raw or stale graph (mirrors the `ask`/`search` guard).
+    public func detectCommunities(config: LeidenConfig = LeidenConfig()) throws
+        -> CommunityDetectionResult
+    {
+        guard isBuilt else { throw GraphRAGError.notInitialized }
+        return LeidenCommunityDetector(config: config).detect(graph)
+    }
+
+    /// A LightRAG dual-level retrieval engine over the current graph snapshot,
+    /// wired to this instance's embedder and (optional) language model. Requires
+    /// a successful `build()` first, so the engine can't hand out answers from a
+    /// raw or partially rebuilt graph (mirrors the `ask`/`search` guard).
+    public func lightRAG(
+        config: DualRetrievalConfig = DualRetrievalConfig(),
+        keywordConfig: KeywordExtractorConfig = KeywordExtractorConfig(),
+        leidenConfig: LeidenConfig = LeidenConfig()
+    ) throws -> LightRAGEngine {
+        guard isBuilt else { throw GraphRAGError.notInitialized }
+        // LightRAG does dual-level *semantic* retrieval, which needs chunk
+        // embeddings. A keyword-only build (`approach == "keyword"`) leaves those
+        // nil on purpose, so reject the mismatch explicitly rather than forcing
+        // corpus-wide re-embedding — which would also throw outright if this
+        // instance's embedder is remote/unavailable.
+        guard self.config.approach.lowercased() != "keyword" else {
+            throw GraphRAGError.validation(
+                message: "LightRAG requires embeddings and is unavailable with approach == \"keyword\"")
+        }
+        return LightRAGEngine(
+            graph: graph, embedder: embedder, languageModel: languageModel,
+            config: config, keywordConfig: keywordConfig, leidenConfig: leidenConfig)
+    }
+
     /// Persist the knowledge graph to JSON.
     public func save(toJSON path: String) throws { try graph.save(toJSON: path) }
 
