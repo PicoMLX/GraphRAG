@@ -79,7 +79,36 @@ private func triangleGraph() -> KnowledgeGraph {
     let keywords = await extractor.extract("Find the quantum computing project")
     #expect(keywords.highLevel.isEmpty)
     #expect(keywords.lowLevel.contains("quantum"))
-    #expect(!keywords.lowLevel.contains("the"))  // shorter than 4 chars
+    #expect(!keywords.lowLevel.contains("the"))  // common stopword
+}
+
+@Test func keywordFallbackKeepsShortEntityNames() async {
+    // Short but meaningful names/acronyms must survive (they'd be lost under a
+    // length cutoff), so retrieval isn't handed an empty query.
+    let extractor = KeywordExtractor(model: nil)
+    let keywords = await extractor.extract("Ada Bob IBM")
+    #expect(keywords.lowLevel == ["Ada", "Bob", "IBM"])
+}
+
+@Test func keywordFallbackFallsBackToRawWhenAllStopwords() async {
+    let extractor = KeywordExtractor(model: nil)
+    let keywords = await extractor.extract("what is the")
+    #expect(!keywords.lowLevel.isEmpty)  // not left empty for an all-stopword query
+}
+
+@Test func keywordExtractorClampsNegativeMaxKeywords() async {
+    // A negative limit must not trap in prefix(_:); it reads as "no keywords".
+    let extractor = KeywordExtractor(
+        model: nil, config: KeywordExtractorConfig(maxKeywords: -1))
+    let keywords = await extractor.extract("Ada Bob IBM")
+    #expect(keywords.isEmpty)
+}
+
+@Test func leidenZeroIterationsYieldsSingletons() {
+    // maxIterations == 0 disables local moving → each node its own community.
+    let result = LeidenCommunityDetector(config: LeidenConfig(maxIterations: 0))
+        .detect(triangleGraph())
+    #expect(result.communityCount == 6)
 }
 
 @Test func keywordLLMParsesDualLevels() async {

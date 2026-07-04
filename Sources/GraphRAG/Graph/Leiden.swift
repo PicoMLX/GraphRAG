@@ -111,7 +111,9 @@ public struct LeidenCommunityDetector: Sendable {
         var sigmaTot = degree  // Σ_tot per community id (ids stay in 0..<n here)
         var previousModularity = modularity(communityOf, adjacency, degree, twoM)
 
-        for _ in 0..<max(1, config.maxIterations) {
+        // `maxIterations == 0` means "no local moving" (refinement-only /
+        // singleton baseline); clamp negatives to 0 so the range never traps.
+        for _ in 0..<max(0, config.maxIterations) {
             var moved = false
             for i in 0..<n {
                 let ci = communityOf[i]

@@ -37,7 +37,9 @@ public struct KeywordExtractorConfig: Sendable {
     public var language: String
 
     public init(maxKeywords: Int = 20, language: String = "English") {
-        self.maxKeywords = maxKeywords
+        // Clamp so a negative limit reads as "no keywords" instead of trapping
+        // later in `prefix(_:)`.
+        self.maxKeywords = max(0, maxKeywords)
         self.language = language
     }
 }
@@ -74,11 +76,14 @@ public struct KeywordExtractor: Sendable {
 
     /// Cap the combined keyword count at `maxKeywords`, keeping high-level first.
     private func capped(_ keywords: DualLevelKeywords) -> DualLevelKeywords {
-        guard keywords.total > config.maxKeywords else { return keywords }
+        // Clamp locally too: `maxKeywords` is mutable, so a negative value set
+        // after init would otherwise trap in `prefix(_:)`.
+        let limit = max(0, config.maxKeywords)
+        guard keywords.total > limit else { return keywords }
         var high = keywords.highLevel
         var low = keywords.lowLevel
-        if high.count > config.maxKeywords { high = Array(high.prefix(config.maxKeywords)) }
-        let remaining = max(0, config.maxKeywords - high.count)
+        if high.count > limit { high = Array(high.prefix(limit)) }
+        let remaining = max(0, limit - high.count)
         low = Array(low.prefix(remaining))
         return DualLevelKeywords(highLevel: high, lowLevel: low)
     }
@@ -133,15 +138,35 @@ public struct KeywordExtractor: Sendable {
         return try? JSONDecoder().decode(DualLevelKeywords.self, from: data)
     }
 
-    /// Deterministic fallback: query words of length >= 4, deduplicated
-    /// case-insensitively in first-seen order, up to 10, as low-level.
+    /// A small English stopword set for the no-LLM fallback. Filtering by
+    /// stopword (rather than a length cutoff) keeps short but meaningful entity
+    /// names and acronyms like "Ada", "Bob", "IBM", "AI", "ML".
+    static let stopwords: Set<String> = [
+        "a", "an", "and", "are", "as", "at", "be", "been", "being", "but", "by",
+        "did", "do", "does", "done", "for", "from", "had", "has", "have", "how",
+        "in", "into", "is", "it", "its", "of", "on", "or", "that", "the", "these",
+        "this", "those", "to", "was", "were", "what", "when", "where", "which",
+        "who", "whom", "why", "will", "with",
+    ]
+
+    /// Deterministic fallback: query tokens minus common stopwords, deduplicated
+    /// case-insensitively in first-seen order, up to 10, as low-level. If every
+    /// token is a stopword, fall back to the raw tokens so retrieval still runs
+    /// rather than searching with an empty query.
     static func fallback(_ query: String) -> DualLevelKeywords {
-        var seen: Set<String> = []
-        let words =
+        let tokens =
             query
             .split(whereSeparator: { $0.isWhitespace })
             .map { String($0.filter { $0.isLetter || $0.isNumber }) }
-            .filter { $0.count >= 4 && seen.insert($0.lowercased()).inserted }
-        return DualLevelKeywords(highLevel: [], lowLevel: Array(words.prefix(10)))
+            .filter { !$0.isEmpty }
+
+        func deduped(_ words: [String]) -> [String] {
+            var seen: Set<String> = []
+            return words.filter { seen.insert($0.lowercased()).inserted }
+        }
+
+        let meaningful = deduped(tokens.filter { !stopwords.contains($0.lowercased()) })
+        let chosen = meaningful.isEmpty ? deduped(tokens) : meaningful
+        return DualLevelKeywords(highLevel: [], lowLevel: Array(chosen.prefix(10)))
     }
 }
