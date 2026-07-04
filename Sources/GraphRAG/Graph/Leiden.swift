@@ -129,6 +129,15 @@ public struct LeidenCommunityDetector: Sendable {
 
                 // Score staying in ci, then every neighbor community; keep the
                 // best (ties: prefer current, then lowest id — deterministic).
+                //
+                // We intentionally do NOT score the empty-singleton candidate
+                // (Σ_tot = 0) here, so a connected over-merge from an earlier pass
+                // can't be split back into a singleton by local moving. This keeps
+                // the port aligned with the upstream simplified single-level Leiden
+                // (disconnected communities are still split in the refinement pass)
+                // and avoids introducing an unverifiable change to this
+                // deterministic core — full Leiden singleton refinement is a
+                // deliberate non-goal for this port.
                 var bestCommunity = ci
                 var bestScore = (weightToCommunity[ci] ?? 0) - config.resolution * ki * sigmaTot[ci] / twoM
                 for (comm, wIn) in weightToCommunity.sorted(by: { $0.key < $1.key }) where comm != ci {

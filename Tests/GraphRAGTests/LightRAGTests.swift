@@ -132,6 +132,27 @@ private func triangleGraph() -> KnowledgeGraph {
     #expect(results.mergedChunks.isEmpty)
 }
 
+@Test func lightRAGRetrieveZeroMaxKeywordsSkipsStoreBuild() async throws {
+    // maxKeywords == 0 forces empty queries, so retrieve must return empty
+    // before building/embedding the stores (the failing embedder proves it).
+    let engine = LightRAGEngine(
+        graph: KnowledgeGraph(), embedder: FailingEmbedder(),
+        keywordConfig: KeywordExtractorConfig(maxKeywords: 0))
+    let results = try await engine.retrieve("q", topK: 5)
+    #expect(results.mergedChunks.isEmpty)
+}
+
+@Test func lightRAGRejectsKeywordOnlyApproach() async throws {
+    // Keyword-only builds leave chunk embeddings nil; LightRAG needs them, so
+    // exporting the engine must fail fast rather than force re-embedding.
+    let rag = try GraphRAGBuilder().withApproach("keyword").build()
+    await rag.addDocument(text: "Ada Lovelace worked with Charles Babbage.")
+    try await rag.build()
+    await #expect(throws: GraphRAGError.self) {
+        _ = try await rag.lightRAG()
+    }
+}
+
 @Test func dualRetrievalNonPositiveTopKReturnsEmpty() async throws {
     let high = MockSearcher(results: [LightRAGResult(id: "h", content: "h", score: 1)])
     let low = MockSearcher(results: [LightRAGResult(id: "l", content: "l", score: 1)])

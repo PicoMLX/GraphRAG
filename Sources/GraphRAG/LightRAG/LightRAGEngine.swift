@@ -95,9 +95,12 @@ public struct LightRAGEngine: Sendable {
     /// Run dual-level retrieval for `query`. The two stores are built once per
     /// engine (cached across calls) rather than rebuilt each query.
     public func retrieve(_ query: String, topK: Int = 10) async throws -> DualRetrievalResults {
-        // A nonpositive topK yields nothing — return before building/embedding the
-        // stores, so a no-op request never triggers corpus-wide embedding work.
-        guard topK > 0 else {
+        // Requests that can't produce hits — a nonpositive topK, or a keyword
+        // budget of 0 (which forces empty high/low queries) — return before
+        // building/embedding the stores, so a no-op never triggers corpus-wide
+        // embedding work. (maxKeywords <= 0 is checked here directly, so no LLM
+        // keyword call is made either.)
+        guard topK > 0, keywordConfig.maxKeywords > 0 else {
             return DualRetrievalResults(
                 highLevelChunks: [], lowLevelChunks: [], mergedChunks: [],
                 keywords: DualLevelKeywords())
