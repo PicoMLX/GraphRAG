@@ -4,6 +4,43 @@
 
 import Foundation
 
+/// Builds and memoizes the two dual-level stores for a fixed graph snapshot, so
+/// repeated queries don't re-embed the whole corpus (which, with a remote
+/// embedder, would cost O(corpus) network calls per query). Reference semantics
+/// via `actor` let a value-type `LightRAGEngine` share one cache across calls.
+private actor LightRAGStoreCache {
+    private let graph: KnowledgeGraph
+    private let embedder: any EmbeddingModel
+    private let leidenConfig: LeidenConfig
+    private var communitiesCache: CommunityDetectionResult?
+    private var storesCache: (low: any SemanticSearcher, high: any SemanticSearcher)?
+
+    init(graph: KnowledgeGraph, embedder: any EmbeddingModel, leidenConfig: LeidenConfig) {
+        self.graph = graph
+        self.embedder = embedder
+        self.leidenConfig = leidenConfig
+    }
+
+    func communities() -> CommunityDetectionResult {
+        if let communitiesCache { return communitiesCache }
+        let detected = LeidenCommunityDetector(config: leidenConfig).detect(graph)
+        communitiesCache = detected
+        return detected
+    }
+
+    func stores() async throws -> (low: any SemanticSearcher, high: any SemanticSearcher) {
+        if let storesCache { return storesCache }
+        let detected = communities()
+        async let low = LightRAG.chunkSearcher(graph: graph, embedder: embedder)
+        async let high = LightRAG.communitySearcher(
+            graph: graph, communities: detected, embedder: embedder)
+        let built: (low: any SemanticSearcher, high: any SemanticSearcher) =
+            (low: try await low, high: try await high)
+        storesCache = built
+        return built
+    }
+}
+
 /// A self-contained LightRAG engine over a snapshot of a `KnowledgeGraph`.
 ///
 /// The low-level store searches document chunks (entity/detail-centric); the
@@ -13,9 +50,10 @@ public struct LightRAGEngine: Sendable {
     public let graph: KnowledgeGraph
     private let embedder: any EmbeddingModel
     private let languageModel: (any LanguageModel)?
-    public var config: DualRetrievalConfig
-    public var keywordConfig: KeywordExtractorConfig
-    public var leidenConfig: LeidenConfig
+    public let config: DualRetrievalConfig
+    public let keywordConfig: KeywordExtractorConfig
+    public let leidenConfig: LeidenConfig
+    private let cache: LightRAGStoreCache
 
     public init(
         graph: KnowledgeGraph,
@@ -31,6 +69,8 @@ public struct LightRAGEngine: Sendable {
         self.config = config
         self.keywordConfig = keywordConfig
         self.leidenConfig = leidenConfig
+        self.cache = LightRAGStoreCache(
+            graph: graph, embedder: embedder, leidenConfig: leidenConfig)
     }
 
     /// Detect entity communities via Leiden.
@@ -38,18 +78,15 @@ public struct LightRAGEngine: Sendable {
         LeidenCommunityDetector(config: leidenConfig).detect(graph)
     }
 
-    /// Run dual-level retrieval for `query`.
+    /// Run dual-level retrieval for `query`. The two stores are built once per
+    /// engine (cached across calls) rather than rebuilt each query.
     public func retrieve(_ query: String, topK: Int = 10) async throws -> DualRetrievalResults {
-        let communities = detectCommunities()
-        // The two stores are independent — build them concurrently.
-        async let lowStore = LightRAG.chunkSearcher(graph: graph, embedder: embedder)
-        async let highStore = LightRAG.communitySearcher(
-            graph: graph, communities: communities, embedder: embedder)
+        let stores = try await cache.stores()
         let extractor = KeywordExtractor(model: languageModel, config: keywordConfig)
-        let retriever = try await DualLevelRetriever(
+        let retriever = DualLevelRetriever(
             keywordExtractor: extractor,
-            highLevelStore: highStore,
-            lowLevelStore: lowStore,
+            highLevelStore: stores.high,
+            lowLevelStore: stores.low,
             config: config)
         return try await retriever.retrieve(query, topK: topK)
     }
@@ -66,11 +103,14 @@ public struct LightRAGEngine: Sendable {
         let context = results.mergedChunks.map { result in
             "[Relevance: \(String(format: "%.3f", result.score))]\n\(result.content)"
         }.joined(separator: "\n\n---\n\n")
-        // High-level hits carry virtual "community_<id>" ids that don't exist in
-        // the graph; keep only real chunk ids as grounding sources.
+
+        // Ground on the real chunk ids each hit stands for (a high-level hit
+        // resolves to its member chunks), deduped in first-seen order, so
+        // synthetic community ids never surface as unresolvable sources.
+        var seenSource: Set<String> = []
         let sources = results.mergedChunks
-            .map(\.id)
-            .filter { !$0.hasPrefix("community_") }
+            .flatMap(\.sourceChunks)
+            .filter { seenSource.insert($0).inserted }
             .map { ChunkID($0) }
         let confidence = min(1.0, Float(results.mergedChunks.count) / Float(max(1, topK)))
 

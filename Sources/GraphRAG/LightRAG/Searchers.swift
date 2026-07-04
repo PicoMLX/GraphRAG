@@ -5,22 +5,33 @@
 import Foundation
 
 /// A `SemanticSearcher` backed by a `HybridRetriever` over a fixed corpus.
+///
+/// Each indexed document carries the real chunk ids it stands for
+/// (`sourceChunks`), so a high-level community hit still resolves back to the
+/// actual graph chunks that ground it rather than to its synthetic id.
 public struct InMemorySemanticSearcher: SemanticSearcher {
     private let retriever: HybridRetriever
     private let embedder: any EmbeddingModel
+    private let sourceChunksByID: [String: [String]]
 
-    private init(retriever: HybridRetriever, embedder: any EmbeddingModel) {
+    private init(
+        retriever: HybridRetriever, embedder: any EmbeddingModel,
+        sourceChunksByID: [String: [String]]
+    ) {
         self.retriever = retriever
         self.embedder = embedder
+        self.sourceChunksByID = sourceChunksByID
     }
 
     /// Build a searcher, reusing each document's precomputed embedding when one
-    /// is supplied and embedding on demand otherwise.
+    /// is supplied and embedding on demand otherwise. `sourceChunks` records the
+    /// real chunk ids each document grounds to.
     public static func build(
-        documents: [(id: String, content: String, embedding: [Float]?)],
+        documents: [(id: String, content: String, embedding: [Float]?, sourceChunks: [String])],
         embedder: any EmbeddingModel
     ) async throws -> InMemorySemanticSearcher {
         var retriever = HybridRetriever()
+        var sourceChunksByID: [String: [String]] = [:]
         for doc in documents {
             // `??` can't wrap an async default (its autoclosure isn't async), so
             // branch explicitly to embed only when no precomputed vector exists.
@@ -31,33 +42,40 @@ public struct InMemorySemanticSearcher: SemanticSearcher {
                 embedding = try await embedder.embed(doc.content)
             }
             retriever.index(id: doc.id, content: doc.content, embedding: embedding)
+            sourceChunksByID[doc.id] = doc.sourceChunks
         }
-        return InMemorySemanticSearcher(retriever: retriever, embedder: embedder)
+        return InMemorySemanticSearcher(
+            retriever: retriever, embedder: embedder, sourceChunksByID: sourceChunksByID)
     }
 
     public func search(_ query: String, topK: Int) async throws -> [LightRAGResult] {
         let queryEmbedding = try await embedder.embed(query)
         let hits = retriever.search(query: query, queryEmbedding: queryEmbedding, limit: topK)
         return hits.map {
-            LightRAGResult(id: $0.id, content: $0.content, score: $0.score, sourceChunks: [$0.id])
+            LightRAGResult(
+                id: $0.id, content: $0.content, score: $0.score,
+                sourceChunks: sourceChunksByID[$0.id] ?? [$0.id])
         }
     }
 }
 
 /// Builders for the LightRAG stores from a `KnowledgeGraph`.
 public enum LightRAG {
-    /// Low-level (entity/detail) store: the document chunks themselves.
+    /// Low-level (entity/detail) store: the document chunks themselves. Each
+    /// chunk grounds to itself.
     public static func chunkSearcher(
         graph: KnowledgeGraph, embedder: any EmbeddingModel
     ) async throws -> InMemorySemanticSearcher {
         // Reuse the embeddings computed during the graph build, when present.
         let documents = graph.chunks.map {
-            (id: $0.id.raw, content: $0.content, embedding: $0.embedding)
+            (id: $0.id.raw, content: $0.content, embedding: $0.embedding, sourceChunks: [$0.id.raw])
         }
         return try await InMemorySemanticSearcher.build(documents: documents, embedder: embedder)
     }
 
     /// High-level (theme/global) store: one short summary per detected community.
+    /// A community grounds to the real chunks that mention its member entities,
+    /// so answers built from high-level hits still cite actual evidence chunks.
     public static func communitySearcher(
         graph: KnowledgeGraph, communities: CommunityDetectionResult, embedder: any EmbeddingModel
     ) async throws -> InMemorySemanticSearcher {
@@ -66,7 +84,8 @@ public enum LightRAG {
             (
                 id: "community_\(community.id)",
                 content: communitySummary(community, graph: graph),
-                embedding: [Float]?.none
+                embedding: [Float]?.none,
+                sourceChunks: communitySourceChunks(community, graph: graph)
             )
         }
         return try await InMemorySemanticSearcher.build(documents: documents, embedder: embedder)
@@ -90,5 +109,17 @@ public enum LightRAG {
             parts.append("Relationships: " + relationTypes.sorted().joined(separator: ", "))
         }
         return parts.joined(separator: ". ")
+    }
+
+    /// The real chunk ids that mention any of a community's member entities, in
+    /// graph chunk order (deterministic). These are the grounding evidence for a
+    /// high-level community hit.
+    public static func communitySourceChunks(
+        _ community: Community, graph: KnowledgeGraph
+    ) -> [String] {
+        let memberSet = Set(community.members)
+        return graph.chunks.compactMap { chunk in
+            chunk.entities.contains(where: memberSet.contains) ? chunk.id.raw : nil
+        }
     }
 }

@@ -116,11 +116,17 @@ public struct DualLevelRetriever: Sendable {
 
     private func merge(high: [LightRAGResult], low: [LightRAGResult], topK: Int) -> [LightRAGResult] {
         guard topK > 0 else { return [] }
+        // Dedup within a level only: high- and low-level ids live in different
+        // spaces (community summaries vs chunks), so a chunk that happens to be
+        // named like a community id must not evict the community hit (or vice
+        // versa). Keying by level makes the merge collision-proof.
         var seen: Set<String> = []
         var merged: [LightRAGResult] = []
 
-        func take(_ result: LightRAGResult) {
-            guard merged.count < topK, seen.insert(result.id).inserted else { return }
+        func take(_ result: LightRAGResult, _ level: Character) {
+            guard merged.count < topK, seen.insert("\(level)\u{1F}\(result.id)").inserted else {
+                return
+            }
             merged.append(result)
         }
 
@@ -128,25 +134,25 @@ public struct DualLevelRetriever: Sendable {
         case .interleave:
             var i = 0
             while merged.count < topK && (i < high.count || i < low.count) {
-                if i < high.count { take(high[i]) }
-                if i < low.count { take(low[i]) }
+                if i < high.count { take(high[i], "h") }
+                if i < low.count { take(low[i], "l") }
                 i += 1
             }
         case .highFirst:
-            for r in high { take(r) }
-            for r in low { take(r) }
+            for r in high { take(r, "h") }
+            for r in low { take(r, "l") }
         case .lowFirst:
-            for r in low { take(r) }
-            for r in high { take(r) }
+            for r in low { take(r, "l") }
+            for r in high { take(r, "h") }
         case .weighted:
             let weighted =
-                high.map { ($0, $0.score * config.highLevelWeight) }
-                + low.map { ($0, $0.score * config.lowLevelWeight) }
-            for (result, _) in weighted.sorted(by: { lhs, rhs in
-                if lhs.1 == rhs.1 { return lhs.0.id < rhs.0.id }
-                return lhs.1 > rhs.1
+                high.map { ($0, "h" as Character, $0.score * config.highLevelWeight) }
+                + low.map { ($0, "l" as Character, $0.score * config.lowLevelWeight) }
+            for (result, level, _) in weighted.sorted(by: { lhs, rhs in
+                if lhs.2 == rhs.2 { return lhs.0.id < rhs.0.id }
+                return lhs.2 > rhs.2
             }) {
-                take(result)
+                take(result, level)
             }
         }
         return merged

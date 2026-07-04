@@ -92,14 +92,14 @@ private func triangleGraph() -> KnowledgeGraph {
 
 // MARK: - Dual-level retrieval / merge
 
-@Test func dualRetrievalInterleavesAndDedups() async throws {
+@Test func dualRetrievalInterleavesAndDedupsWithinLevel() async throws {
+    // A store that returns a duplicate id within its own results is deduped.
     let high = MockSearcher(results: [
         LightRAGResult(id: "h1", content: "theme one", score: 0.9),
-        LightRAGResult(id: "shared", content: "shared", score: 0.5),
+        LightRAGResult(id: "h1", content: "theme one again", score: 0.4),
     ])
     let low = MockSearcher(results: [
-        LightRAGResult(id: "l1", content: "detail one", score: 0.8),
-        LightRAGResult(id: "shared", content: "shared", score: 0.7),
+        LightRAGResult(id: "l1", content: "detail one", score: 0.8)
     ])
     let extractor = KeywordExtractor(
         model: MockLLM(response: #"{"high_level":["t"],"low_level":["d"]}"#))
@@ -108,10 +108,42 @@ private func triangleGraph() -> KnowledgeGraph {
 
     let results = try await retriever.retrieve("query", topK: 5)
     let ids = results.mergedChunks.map(\.id)
-    // Interleave: h1, l1, shared (deduped once), … no duplicate "shared".
     #expect(ids.first == "h1")
-    #expect(ids.filter { $0 == "shared" }.count == 1)
-    #expect(Set(ids) == ["h1", "l1", "shared"])
+    #expect(ids.filter { $0 == "h1" }.count == 1)  // within-level dedup
+    #expect(Set(ids) == ["h1", "l1"])
+}
+
+@Test func dualRetrievalKeepsCollidingCrossLevelIds() async throws {
+    // A real chunk id equal to a community id must survive on both levels — the
+    // high (community) and low (chunk) hits are distinct results and neither
+    // should silently evict the other.
+    let high = MockSearcher(results: [
+        LightRAGResult(id: "community_0", content: "summary", score: 0.9)
+    ])
+    let low = MockSearcher(results: [
+        LightRAGResult(id: "community_0", content: "chunk text", score: 0.8)
+    ])
+    let extractor = KeywordExtractor(
+        model: MockLLM(response: #"{"high_level":["t"],"low_level":["d"]}"#))
+    let retriever = DualLevelRetriever(
+        keywordExtractor: extractor, highLevelStore: high, lowLevelStore: low)
+
+    let results = try await retriever.retrieve("query", topK: 5)
+    #expect(results.mergedChunks.count == 2)
+    #expect(results.mergedChunks.filter { $0.id == "community_0" }.count == 2)
+}
+
+@Test func communityGroundsToMemberChunks() throws {
+    var graph = triangleGraph()
+    let chunk = TextChunk(
+        id: ChunkID("c1"), documentID: DocumentID("d"), content: "about a1",
+        startOffset: 0, endOffset: 8, entities: [EntityID("a1")])
+    graph.addChunk(chunk)
+    let communities = LeidenCommunityDetector().detect(graph)
+    let a1Community = try #require(
+        communities.communities.first { $0.members.contains(EntityID("a1")) })
+    let sources = LightRAG.communitySourceChunks(a1Community, graph: graph)
+    #expect(sources.contains("c1"))
 }
 
 @Test func dualRetrievalWeightedOrdersByWeightedScore() async throws {
