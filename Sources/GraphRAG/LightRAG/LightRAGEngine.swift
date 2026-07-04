@@ -41,11 +41,12 @@ public struct LightRAGEngine: Sendable {
     /// Run dual-level retrieval for `query`.
     public func retrieve(_ query: String, topK: Int = 10) async throws -> DualRetrievalResults {
         let communities = detectCommunities()
-        let lowStore = try await LightRAG.chunkSearcher(graph: graph, embedder: embedder)
-        let highStore = try await LightRAG.communitySearcher(
+        // The two stores are independent — build them concurrently.
+        async let lowStore = LightRAG.chunkSearcher(graph: graph, embedder: embedder)
+        async let highStore = LightRAG.communitySearcher(
             graph: graph, communities: communities, embedder: embedder)
         let extractor = KeywordExtractor(model: languageModel, config: keywordConfig)
-        let retriever = DualLevelRetriever(
+        let retriever = try await DualLevelRetriever(
             keywordExtractor: extractor,
             highLevelStore: highStore,
             lowLevelStore: lowStore,
@@ -65,7 +66,12 @@ public struct LightRAGEngine: Sendable {
         let context = results.mergedChunks.map { result in
             "[Relevance: \(String(format: "%.3f", result.score))]\n\(result.content)"
         }.joined(separator: "\n\n---\n\n")
-        let sources = results.mergedChunks.map { ChunkID($0.id) }
+        // High-level hits carry virtual "community_<id>" ids that don't exist in
+        // the graph; keep only real chunk ids as grounding sources.
+        let sources = results.mergedChunks
+            .map(\.id)
+            .filter { !$0.hasPrefix("community_") }
+            .map { ChunkID($0) }
         let confidence = min(1.0, Float(results.mergedChunks.count) / Float(max(1, topK)))
 
         if let languageModel, await languageModel.isAvailable() {

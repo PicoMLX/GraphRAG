@@ -98,11 +98,14 @@ public struct DualLevelRetriever: Sendable {
     public func retrieve(_ query: String, topK: Int = 10) async throws -> DualRetrievalResults {
         let keywords = await keywordExtractor.extract(query)
 
-        // Each level searches with its joined keywords as a single query.
+        // Each level searches with its joined keywords as a single query. The two
+        // levels are independent, so run them concurrently.
         let highQuery = keywords.highLevel.joined(separator: " ")
         let lowQuery = keywords.lowLevel.joined(separator: " ")
-        let high = highQuery.isEmpty ? [] : try await highLevelStore.search(highQuery, topK: topK)
-        let low = lowQuery.isEmpty ? [] : try await lowLevelStore.search(lowQuery, topK: topK)
+        async let highResult = highQuery.isEmpty ? [] : highLevelStore.search(highQuery, topK: topK)
+        async let lowResult = lowQuery.isEmpty ? [] : lowLevelStore.search(lowQuery, topK: topK)
+        let high = try await highResult
+        let low = try await lowResult
 
         let merged = merge(high: high, low: low, topK: topK)
         return DualRetrievalResults(

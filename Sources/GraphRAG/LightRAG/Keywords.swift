@@ -120,22 +120,27 @@ public struct KeywordExtractor: Sendable {
     }
 
     /// Parse the JSON object between the first `{` and last `}` of the response.
+    /// Thinking-tag blocks are stripped first, so a `{` inside a `<think>…</think>`
+    /// preamble can't be mistaken for the start of the JSON payload.
     static func parse(_ response: String) -> DualLevelKeywords? {
-        guard let first = response.firstIndex(of: "{"),
-            let last = response.lastIndex(of: "}"), first < last
+        let cleaned = GraphRAG.stripThinkingTags(response)
+        guard let first = cleaned.firstIndex(of: "{"),
+            let last = cleaned.lastIndex(of: "}"), first < last
         else { return nil }
-        let slice = String(response[first...last])
+        let slice = String(cleaned[first...last])
         guard let data = slice.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(DualLevelKeywords.self, from: data)
     }
 
-    /// Deterministic fallback: query words of length >= 4, up to 10, as low-level.
+    /// Deterministic fallback: query words of length >= 4, deduplicated
+    /// case-insensitively in first-seen order, up to 10, as low-level.
     static func fallback(_ query: String) -> DualLevelKeywords {
+        var seen: Set<String> = []
         let words =
             query
             .split(whereSeparator: { $0.isWhitespace })
             .map { String($0.filter { $0.isLetter || $0.isNumber }) }
-            .filter { $0.count >= 4 }
+            .filter { $0.count >= 4 && seen.insert($0.lowercased()).inserted }
         return DualLevelKeywords(highLevel: [], lowLevel: Array(words.prefix(10)))
     }
 }

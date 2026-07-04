@@ -14,13 +14,22 @@ public struct InMemorySemanticSearcher: SemanticSearcher {
         self.embedder = embedder
     }
 
-    /// Build a searcher by embedding and indexing each document.
+    /// Build a searcher, reusing each document's precomputed embedding when one
+    /// is supplied and embedding on demand otherwise.
     public static func build(
-        documents: [(id: String, content: String)], embedder: any EmbeddingModel
+        documents: [(id: String, content: String, embedding: [Float]?)],
+        embedder: any EmbeddingModel
     ) async throws -> InMemorySemanticSearcher {
         var retriever = HybridRetriever()
         for doc in documents {
-            let embedding = try await embedder.embed(doc.content)
+            // `??` can't wrap an async default (its autoclosure isn't async), so
+            // branch explicitly to embed only when no precomputed vector exists.
+            let embedding: [Float]
+            if let precomputed = doc.embedding {
+                embedding = precomputed
+            } else {
+                embedding = try await embedder.embed(doc.content)
+            }
             retriever.index(id: doc.id, content: doc.content, embedding: embedding)
         }
         return InMemorySemanticSearcher(retriever: retriever, embedder: embedder)
@@ -41,7 +50,10 @@ public enum LightRAG {
     public static func chunkSearcher(
         graph: KnowledgeGraph, embedder: any EmbeddingModel
     ) async throws -> InMemorySemanticSearcher {
-        let documents = graph.chunks.map { (id: $0.id.raw, content: $0.content) }
+        // Reuse the embeddings computed during the graph build, when present.
+        let documents = graph.chunks.map {
+            (id: $0.id.raw, content: $0.content, embedding: $0.embedding)
+        }
         return try await InMemorySemanticSearcher.build(documents: documents, embedder: embedder)
     }
 
@@ -49,8 +61,13 @@ public enum LightRAG {
     public static func communitySearcher(
         graph: KnowledgeGraph, communities: CommunityDetectionResult, embedder: any EmbeddingModel
     ) async throws -> InMemorySemanticSearcher {
+        // Summaries are derived text with no precomputed embedding — embed on demand.
         let documents = communities.communities.map { community in
-            (id: "community_\(community.id)", content: communitySummary(community, graph: graph))
+            (
+                id: "community_\(community.id)",
+                content: communitySummary(community, graph: graph),
+                embedding: [Float]?.none
+            )
         }
         return try await InMemorySemanticSearcher.build(documents: documents, embedder: embedder)
     }

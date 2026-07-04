@@ -88,9 +88,13 @@ public struct LeidenCommunityDetector: Sendable {
             mergedWeight[s, default: [:]][t, default: 0] += w
             mergedWeight[t, default: [:]][s, default: 0] += w
         }
+        // Build adjacency by node index and sorted neighbor id so both the
+        // neighbor ordering and the floating-point degree summation are
+        // deterministic across runs (dictionary iteration order is randomized).
         var degree = [Double](repeating: 0, count: n)
-        for (i, neighbors) in mergedWeight {
-            for (j, w) in neighbors {
+        for i in 0..<n {
+            guard let neighbors = mergedWeight[i] else { continue }
+            for (j, w) in neighbors.sorted(by: { $0.key < $1.key }) {
                 adjacency[i].append((j, w))
                 degree[i] += w
             }
@@ -249,8 +253,11 @@ public struct LeidenCommunityDetector: Sendable {
                 internalWeight[c, default: 0] += edge.weight
             }
         }
+        // Sum in sorted community-id order so the (non-associative) floating-point
+        // total is identical across runs.
         var q = 0.0
-        for (c, tot) in totalDegree {
+        for c in totalDegree.keys.sorted() {
+            let tot = totalDegree[c]!
             let sin = internalWeight[c] ?? 0
             q += sin / twoM - config.resolution * (tot / twoM) * (tot / twoM)
         }
