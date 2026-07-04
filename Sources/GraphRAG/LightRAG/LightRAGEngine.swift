@@ -94,6 +94,16 @@ public struct LightRAGEngine: Sendable {
 
     /// Run dual-level retrieval for `query`. The two stores are built once per
     /// engine (cached across calls) rather than rebuilt each query.
+    ///
+    /// Design note: `topK` is LightRAG's own per-call parameter and is
+    /// intentionally *not* defaulted from the owning GraphRAG's
+    /// `Config.topKResults` — LightRAG is configured independently of the
+    /// hybrid-path Config; pass `topK` explicitly to cap results. Likewise, an
+    /// empty/degenerate query is handled by the retriever returning no hits: the
+    /// stores are built once and cached, so an empty *first* query at most
+    /// triggers that one build early rather than per-query waste. (Only the
+    /// free config checks below — nonpositive topK, zero keyword budget — are
+    /// short-circuited ahead of the cache, since they need no keyword extraction.)
     public func retrieve(_ query: String, topK: Int = 10) async throws -> DualRetrievalResults {
         // Requests that can't produce hits — a nonpositive topK, or a keyword
         // budget of 0 (which forces empty high/low queries) — return before

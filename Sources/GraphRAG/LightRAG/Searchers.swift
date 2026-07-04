@@ -55,6 +55,15 @@ public struct InMemorySemanticSearcher: SemanticSearcher {
     }
 
     public func search(_ query: String, topK: Int) async throws -> [LightRAGResult] {
+        // Design note: LightRAG is a self-contained retrieval subsystem with its
+        // own configuration (DualRetrievalConfig / KeywordExtractorConfig). It
+        // uses full hybrid (BM25 + cosine) search with the default similarity
+        // threshold on purpose and does NOT inherit the owning GraphRAG's
+        // hybrid-path Config (`approach`, `similarityThreshold`) — those govern
+        // `GraphRAG.ask`/`search`, a different retrieval path. This keeps the two
+        // strategies independent; a caller who wants semantic-only or a stricter
+        // threshold uses the GraphRAG path (or we can thread those settings in if
+        // that inheritance is desired).
         let queryEmbedding = try await embedder.embed(query)
         let hits = retriever.search(query: query, queryEmbedding: queryEmbedding, limit: topK)
         return hits.map {
