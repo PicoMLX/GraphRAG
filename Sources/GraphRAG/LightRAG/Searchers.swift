@@ -111,15 +111,33 @@ public enum LightRAG {
         return parts.joined(separator: ". ")
     }
 
-    /// The real chunk ids that mention any of a community's member entities, in
-    /// graph chunk order (deterministic). These are the grounding evidence for a
+    /// The real chunk ids that ground a community's member entities, deterministic
+    /// and deduplicated in first-seen order. These are the evidence for a
     /// high-level community hit.
+    ///
+    /// Uses both representations a `KnowledgeGraph` may carry: chunks annotated
+    /// with member entities (`TextChunk.entities`) and the members' own mention
+    /// evidence (`Entity.mentions`). The build pipeline populates the former, but
+    /// externally-constructed graphs may only carry the latter — either alone
+    /// still yields grounding.
     public static func communitySourceChunks(
         _ community: Community, graph: KnowledgeGraph
     ) -> [String] {
         let memberSet = Set(community.members)
-        return graph.chunks.compactMap { chunk in
-            chunk.entities.contains(where: memberSet.contains) ? chunk.id.raw : nil
+        var ids: [String] = []
+        var seen: Set<String> = []
+        func add(_ id: String) {
+            if seen.insert(id).inserted { ids.append(id) }
         }
+        // Chunks annotated with a member entity, in graph chunk order.
+        for chunk in graph.chunks where chunk.entities.contains(where: memberSet.contains) {
+            add(chunk.id.raw)
+        }
+        // Member entities' own mention evidence, in member then mention order.
+        for member in community.members {
+            guard let entity = graph.entity(member) else { continue }
+            for mention in entity.mentions { add(mention.chunkID.raw) }
+        }
+        return ids
     }
 }

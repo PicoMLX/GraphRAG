@@ -150,9 +150,14 @@ public struct KeywordExtractor: Sendable {
     ]
 
     /// Deterministic fallback: query tokens minus common stopwords, deduplicated
-    /// case-insensitively in first-seen order, up to 10, as low-level. If every
-    /// token is a stopword, fall back to the raw tokens so retrieval still runs
-    /// rather than searching with an empty query.
+    /// case-insensitively in first-seen order, up to 10. If every token is a
+    /// stopword, fall back to the raw tokens so retrieval still runs rather than
+    /// searching with an empty query.
+    ///
+    /// Without an LLM there's no theme/entity split, so the same terms populate
+    /// both levels — otherwise the high-level (community) store would never be
+    /// searched in the default offline path, and global/theme questions would
+    /// silently degrade to chunk search only.
     static func fallback(_ query: String) -> DualLevelKeywords {
         let tokens =
             query
@@ -166,7 +171,7 @@ public struct KeywordExtractor: Sendable {
         }
 
         let meaningful = deduped(tokens.filter { !stopwords.contains($0.lowercased()) })
-        let chosen = meaningful.isEmpty ? deduped(tokens) : meaningful
-        return DualLevelKeywords(highLevel: [], lowLevel: Array(chosen.prefix(10)))
+        let chosen = Array((meaningful.isEmpty ? deduped(tokens) : meaningful).prefix(10))
+        return DualLevelKeywords(highLevel: chosen, lowLevel: chosen)
     }
 }

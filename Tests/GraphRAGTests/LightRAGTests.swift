@@ -77,8 +77,9 @@ private func triangleGraph() -> KnowledgeGraph {
 @Test func keywordFallbackTokenizesQuery() async {
     let extractor = KeywordExtractor(model: nil)
     let keywords = await extractor.extract("Find the quantum computing project")
-    #expect(keywords.highLevel.isEmpty)
+    // Both levels are populated offline so the high-level store is still searched.
     #expect(keywords.lowLevel.contains("quantum"))
+    #expect(keywords.highLevel.contains("quantum"))
     #expect(!keywords.lowLevel.contains("the"))  // common stopword
 }
 
@@ -173,6 +174,22 @@ private func triangleGraph() -> KnowledgeGraph {
         communities.communities.first { $0.members.contains(EntityID("a1")) })
     let sources = LightRAG.communitySourceChunks(a1Community, graph: graph)
     #expect(sources.contains("c1"))
+}
+
+@Test func communityGroundsViaEntityMentions() throws {
+    // A graph carrying only Entity.mentions (no TextChunk.entities annotations)
+    // must still ground community hits to the mentioned chunks.
+    var graph = KnowledgeGraph()
+    let mention = EntityMention(chunkID: ChunkID("c9"), startOffset: 0, endOffset: 3, confidence: 1)
+    graph.addEntity(Entity(id: EntityID("e1"), name: "e1", entityType: "X", mentions: [mention]))
+    graph.addEntity(Entity(id: EntityID("e2"), name: "e2", entityType: "X"))
+    graph.addRelationship(
+        Relationship(source: EntityID("e1"), target: EntityID("e2"), relationType: "R", confidence: 1))
+    let communities = LeidenCommunityDetector().detect(graph)
+    let community = try #require(
+        communities.communities.first { $0.members.contains(EntityID("e1")) })
+    let sources = LightRAG.communitySourceChunks(community, graph: graph)
+    #expect(sources.contains("c9"))
 }
 
 @Test func dualRetrievalWeightedOrdersByWeightedScore() async throws {

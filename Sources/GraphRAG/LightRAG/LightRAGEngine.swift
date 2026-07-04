@@ -9,11 +9,16 @@ import Foundation
 /// embedder, would cost O(corpus) network calls per query). Reference semantics
 /// via `actor` let a value-type `LightRAGEngine` share one cache across calls.
 private actor LightRAGStoreCache {
+    typealias Stores = (low: any SemanticSearcher, high: any SemanticSearcher)
+
     private let graph: KnowledgeGraph
     private let embedder: any EmbeddingModel
     private let leidenConfig: LeidenConfig
     private var communitiesCache: CommunityDetectionResult?
-    private var storesCache: (low: any SemanticSearcher, high: any SemanticSearcher)?
+    /// The single in-flight (or completed) build. Stored *before* the first
+    /// await so concurrent first callers await the same task instead of each
+    /// starting a duplicate O(corpus) embedding pass (actor reentrancy).
+    private var storesTask: Task<Stores, Error>?
 
     init(graph: KnowledgeGraph, embedder: any EmbeddingModel, leidenConfig: LeidenConfig) {
         self.graph = graph
@@ -28,16 +33,25 @@ private actor LightRAGStoreCache {
         return detected
     }
 
-    func stores() async throws -> (low: any SemanticSearcher, high: any SemanticSearcher) {
-        if let storesCache { return storesCache }
+    func stores() async throws -> Stores {
+        if let storesTask { return try await storesTask.value }
         let detected = communities()
-        async let low = LightRAG.chunkSearcher(graph: graph, embedder: embedder)
-        async let high = LightRAG.communitySearcher(
-            graph: graph, communities: detected, embedder: embedder)
-        let built: (low: any SemanticSearcher, high: any SemanticSearcher) =
-            (low: try await low, high: try await high)
-        storesCache = built
-        return built
+        let embedder = self.embedder
+        let graph = self.graph
+        let task = Task { () throws -> Stores in
+            async let low = LightRAG.chunkSearcher(graph: graph, embedder: embedder)
+            async let high = LightRAG.communitySearcher(
+                graph: graph, communities: detected, embedder: embedder)
+            return (low: try await low, high: try await high)
+        }
+        storesTask = task
+        do {
+            return try await task.value
+        } catch {
+            // Let a later call retry rather than caching the failure forever.
+            storesTask = nil
+            throw error
+        }
     }
 }
 
