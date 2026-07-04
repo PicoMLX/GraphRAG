@@ -263,7 +263,7 @@ public actor GraphRAG {
         // nil on purpose, so reject the mismatch explicitly rather than forcing
         // corpus-wide re-embedding — which would also throw outright if this
         // instance's embedder is remote/unavailable.
-        guard config.approach.lowercased() != "keyword" else {
+        guard self.config.approach.lowercased() != "keyword" else {
             throw GraphRAGError.validation(
                 message: "LightRAG requires embeddings and is unavailable with approach == \"keyword\"")
         }
