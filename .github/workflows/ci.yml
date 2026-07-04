@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Build & Test (Linux / Swift)
+    runs-on: ubuntu-latest
+    # Official Swift toolchain image. Must be >= the package's
+    # swift-tools-version (6.1); bump this tag when raising the manifest.
+    container: swift:6.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build
+        run: swift build --build-tests
+
+      - name: Test
+        run: swift test --skip-build
