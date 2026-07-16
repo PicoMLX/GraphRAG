@@ -14,16 +14,21 @@ private actor LightRAGStoreCache {
     private let graph: KnowledgeGraph
     private let embedder: any EmbeddingModel
     private let leidenConfig: LeidenConfig
+    private let searchOptions: LightRAGSearchOptions
     private var communitiesCache: CommunityDetectionResult?
     /// The single in-flight (or completed) build. Stored *before* the first
     /// await so concurrent first callers await the same task instead of each
     /// starting a duplicate O(corpus) embedding pass (actor reentrancy).
     private var storesTask: Task<Stores, Error>?
 
-    init(graph: KnowledgeGraph, embedder: any EmbeddingModel, leidenConfig: LeidenConfig) {
+    init(
+        graph: KnowledgeGraph, embedder: any EmbeddingModel, leidenConfig: LeidenConfig,
+        searchOptions: LightRAGSearchOptions
+    ) {
         self.graph = graph
         self.embedder = embedder
         self.leidenConfig = leidenConfig
+        self.searchOptions = searchOptions
     }
 
     func communities() -> CommunityDetectionResult {
@@ -38,10 +43,15 @@ private actor LightRAGStoreCache {
         let detected = communities()
         let embedder = self.embedder
         let graph = self.graph
-        let task = Task { () throws -> Stores in
-            async let low = LightRAG.chunkSearcher(graph: graph, embedder: embedder)
+        let options = self.searchOptions
+        // Detached so the build (summary generation + on-demand embedding) runs
+        // on the global pool rather than the cache actor's executor, keeping the
+        // actor responsive to concurrent callers.
+        let task = Task.detached { () throws -> Stores in
+            async let low = LightRAG.chunkSearcher(
+                graph: graph, embedder: embedder, options: options)
             async let high = LightRAG.communitySearcher(
-                graph: graph, communities: detected, embedder: embedder)
+                graph: graph, communities: detected, embedder: embedder, options: options)
             return (low: try await low, high: try await high)
         }
         storesTask = task
@@ -67,6 +77,12 @@ public struct LightRAGEngine: Sendable {
     public let config: DualRetrievalConfig
     public let keywordConfig: KeywordExtractorConfig
     public let leidenConfig: LeidenConfig
+    /// Store-level retrieval settings (semantic threshold, keyword toggle),
+    /// populated from the owning GraphRAG's `Config` when created via `lightRAG()`.
+    public let searchOptions: LightRAGSearchOptions
+    /// Default result cap used when `retrieve`/`ask` are called without an explicit
+    /// `topK`; set from `Config.topKResults` via `lightRAG()`.
+    public let defaultTopK: Int
     private let cache: LightRAGStoreCache
 
     public init(
@@ -75,7 +91,9 @@ public struct LightRAGEngine: Sendable {
         languageModel: (any LanguageModel)? = nil,
         config: DualRetrievalConfig = DualRetrievalConfig(),
         keywordConfig: KeywordExtractorConfig = KeywordExtractorConfig(),
-        leidenConfig: LeidenConfig = LeidenConfig()
+        leidenConfig: LeidenConfig = LeidenConfig(),
+        searchOptions: LightRAGSearchOptions = LightRAGSearchOptions(),
+        defaultTopK: Int = 10
     ) {
         self.graph = graph
         self.embedder = embedder
@@ -83,8 +101,11 @@ public struct LightRAGEngine: Sendable {
         self.config = config
         self.keywordConfig = keywordConfig
         self.leidenConfig = leidenConfig
+        self.searchOptions = searchOptions
+        self.defaultTopK = defaultTopK
         self.cache = LightRAGStoreCache(
-            graph: graph, embedder: embedder, leidenConfig: leidenConfig)
+            graph: graph, embedder: embedder, leidenConfig: leidenConfig,
+            searchOptions: searchOptions)
     }
 
     /// Detect entity communities via Leiden.
@@ -95,22 +116,17 @@ public struct LightRAGEngine: Sendable {
     /// Run dual-level retrieval for `query`. The two stores are built once per
     /// engine (cached across calls) rather than rebuilt each query.
     ///
-    /// Design note: `topK` is LightRAG's own per-call parameter and is
-    /// intentionally *not* defaulted from the owning GraphRAG's
-    /// `Config.topKResults` — LightRAG is configured independently of the
-    /// hybrid-path Config; pass `topK` explicitly to cap results. Likewise, an
-    /// empty/degenerate query is handled by the retriever returning no hits: the
-    /// stores are built once and cached, so an empty *first* query at most
-    /// triggers that one build early rather than per-query waste. (Only the
-    /// free config checks below — nonpositive topK, zero keyword budget — are
-    /// short-circuited ahead of the cache, since they need no keyword extraction.)
-    public func retrieve(_ query: String, topK: Int = 10) async throws -> DualRetrievalResults {
+    /// `topK` defaults to `defaultTopK` when omitted — which `GraphRAG.lightRAG()`
+    /// sets from `Config.topKResults`, so the LightRAG path honors the same result
+    /// cap as `GraphRAG.ask`/`search` on the configured instance.
+    public func retrieve(_ query: String, topK: Int? = nil) async throws -> DualRetrievalResults {
+        let effectiveTopK = topK ?? defaultTopK
         // Requests that can't produce hits — a nonpositive topK, or a keyword
         // budget of 0 (which forces empty high/low queries) — return before
         // building/embedding the stores, so a no-op never triggers corpus-wide
         // embedding work. (maxKeywords <= 0 is checked here directly, so no LLM
         // keyword call is made either.)
-        guard topK > 0, keywordConfig.maxKeywords > 0 else {
+        guard effectiveTopK > 0, keywordConfig.maxKeywords > 0 else {
             return DualRetrievalResults(
                 highLevelChunks: [], lowLevelChunks: [], mergedChunks: [],
                 keywords: DualLevelKeywords())
@@ -122,13 +138,15 @@ public struct LightRAGEngine: Sendable {
             highLevelStore: stores.high,
             lowLevelStore: stores.low,
             config: config)
-        return try await retriever.retrieve(query, topK: topK)
+        return try await retriever.retrieve(query, topK: effectiveTopK)
     }
 
     /// Answer `query` using dual-level retrieval, synthesizing with the LLM when
-    /// available and falling back to an extractive summary otherwise.
-    public func ask(_ query: String, topK: Int = 10) async throws -> Answer {
-        let results = try await retrieve(query, topK: topK)
+    /// available and falling back to an extractive summary otherwise. `topK`
+    /// defaults to `defaultTopK` (see `retrieve`).
+    public func ask(_ query: String, topK: Int? = nil) async throws -> Answer {
+        let effectiveTopK = topK ?? defaultTopK
+        let results = try await retrieve(query, topK: effectiveTopK)
         guard !results.mergedChunks.isEmpty else {
             return Answer(
                 text: "I don't have enough information to answer this question.", confidence: 0)
@@ -146,7 +164,7 @@ public struct LightRAGEngine: Sendable {
             .flatMap(\.sourceChunks)
             .filter { seenSource.insert($0).inserted }
             .map { ChunkID($0) }
-        let confidence = min(1.0, Float(results.mergedChunks.count) / Float(max(1, topK)))
+        let confidence = min(1.0, Float(results.mergedChunks.count) / Float(max(1, effectiveTopK)))
 
         if let languageModel, await languageModel.isAvailable() {
             let prompt = Prompts.fill(Prompts.answerGeneration, ["context": context, "query": query])

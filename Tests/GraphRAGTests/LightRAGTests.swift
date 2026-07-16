@@ -153,6 +153,31 @@ private func triangleGraph() -> KnowledgeGraph {
     }
 }
 
+@Test func lightRAGInheritsConfiguredTopK() async throws {
+    // An engine created via lightRAG() defaults topK to the instance's
+    // Config.topKResults, so ask/retrieve without an explicit topK honor the cap.
+    let rag = try GraphRAGBuilder().withChunkSize(24).withChunkOverlap(0).withTopK(1).build()
+    await rag.addDocument(text: "Alpha region. Bravo region. Charlie region. Delta region.")
+    try await rag.build()
+    let engine = try await rag.lightRAG()
+    #expect(engine.defaultTopK == 1)
+    let results = try await engine.retrieve("Alpha Bravo Charlie Delta")
+    #expect(results.mergedChunks.count <= 1)
+}
+
+@Test func lightRAGSemanticApproachRuns() async throws {
+    // approach == "semantic" suppresses BM25 in the LightRAG stores; the engine
+    // must still build and answer without throwing (smoke over the inherited path).
+    let rag = try GraphRAGBuilder().withApproach("semantic").withTopK(3).build()
+    await rag.addDocument(
+        text: "Ada Lovelace collaborated with Charles Babbage on the Analytical Engine.")
+    try await rag.build()
+    let engine = try await rag.lightRAG()
+    #expect(!engine.searchOptions.includeKeyword)
+    let answer = try await engine.ask("Who worked on the Analytical Engine?")
+    #expect(answer.confidence >= 0)
+}
+
 @Test func dualRetrievalNonPositiveTopKReturnsEmpty() async throws {
     let high = MockSearcher(results: [LightRAGResult(id: "h", content: "h", score: 1)])
     let low = MockSearcher(results: [LightRAGResult(id: "l", content: "l", score: 1)])

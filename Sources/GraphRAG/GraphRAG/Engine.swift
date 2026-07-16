@@ -263,13 +263,22 @@ public actor GraphRAG {
         // nil on purpose, so reject the mismatch explicitly rather than forcing
         // corpus-wide re-embedding — which would also throw outright if this
         // instance's embedder is remote/unavailable.
-        guard self.config.approach.lowercased() != "keyword" else {
+        let approach = self.config.approach.lowercased()
+        guard approach != "keyword" else {
             throw GraphRAGError.validation(
                 message: "LightRAG requires embeddings and is unavailable with approach == \"keyword\"")
         }
+        // Inherit this instance's retrieval settings so the LightRAG path stays
+        // consistent with `ask`/`search` on the same configured graph: honor the
+        // similarity threshold, suppress BM25 for `approach == "semantic"`, and
+        // default `topK` to the configured result cap.
+        let searchOptions = LightRAGSearchOptions(
+            semanticThreshold: self.config.similarityThreshold,
+            includeKeyword: approach != "semantic")
         return LightRAGEngine(
             graph: graph, embedder: embedder, languageModel: languageModel,
-            config: config, keywordConfig: keywordConfig, leidenConfig: leidenConfig)
+            config: config, keywordConfig: keywordConfig, leidenConfig: leidenConfig,
+            searchOptions: searchOptions, defaultTopK: self.config.topKResults)
     }
 
     /// Persist the knowledge graph to JSON.
